@@ -1,0 +1,13 @@
+{application, eatrun,
+ [
+  {description, "Eat and Run server"},
+  {vsn, "1"},
+  {registered, []},
+  {applications, [
+                  kernel,
+                  stdlib,
+                  cowboy
+                 ]},
+  {mod, { eatrun_app, []}},
+  {env, []}
+ ]}.
