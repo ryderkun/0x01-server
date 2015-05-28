@@ -31,7 +31,8 @@
 
 
 
--define(TIMER, 50).   % 1/10 s
+-define(TIMER, 200).   % 1/10 s
+-define(SPEED, 10).
 
 -include("protocol.hrl").
 -include("player.hrl").
@@ -70,7 +71,7 @@ start_link() ->
     {ok, State :: #state{}} | {ok, State :: #state{}, timeout() | hibernate} |
     {stop, Reason :: term()} | ignore).
 init([]) ->
-%%     erlang:start_timer(?TIMER, self(), sync),
+    erlang:start_timer(?TIMER, self(), sync),
     {ok, #state{units = maps:new(), players = []}}.
 
 %%--------------------------------------------------------------------
@@ -115,8 +116,11 @@ handle_cast({unitadd, Us, Msg, FromPid}, #state{units = Units, players = Players
     UsMap = maps:from_list([{U#unit.id, U} || U <- Us]),
     NewUnits = maps:merge(Units, UsMap),
 
+    Data = protocol_handler:pack_with_id(Msg),
+    io:format("unitadd size = ~p~n", [size(Data)]),
+
     lists:foreach(
-        fun(P) -> P ! {notify, protocol_handler:pack_with_id(Msg)} end,
+        fun(P) -> P ! {notify, Data} end,
         lists:delete(FromPid, Players)
     ),
 
@@ -125,33 +129,34 @@ handle_cast({unitadd, Us, Msg, FromPid}, #state{units = Units, players = Players
 
 handle_cast({unitupdate, Us, Msg, FromPid}, #state{units = Units, players = Players} = State) ->
     io:format("unitupdate...~n"),
-%%     NewUnits = lists:foldl(
-%%         fun(U, Acc) ->
-%%             case maps:find(U#unit.id, Acc) of
-%%                 {ok, Value} ->
-%%                     NewValue = Value#unit{
-%%                         pos = U#unit.pos,
-%%                         move_vector = U#unit.move_vector,
-%%                         size = U#unit.size
-%%                     },
-%%
-%%                     maps:update(U#unit.id, NewValue, Acc);
-%%                 error ->
-%%                     Acc
-%%             end
-%%         end,
-%%         Units,
-%%         Us
-%%     ),
-%%
-%%     io:format("~p~n", [NewUnits]),
+    NewUnits = lists:foldl(
+        fun(U, Acc) ->
+            case maps:find(U#unit.id, Acc) of
+                {ok, Value} ->
+                    NewValue = Value#unit{
+                        pos = U#unit.pos,
+                        move_vector = U#unit.move_vector,
+                        size = U#unit.size,
+                        milliseconds = U#unit.milliseconds
+                    },
 
-    lists:foreach(
-        fun(P) -> P ! {notify, protocol_handler:pack_with_id(Msg)} end,
-        lists:delete(FromPid, Players)
+                    maps:update(U#unit.id, NewValue, Acc);
+                error ->
+                    Acc
+            end
+        end,
+        Units,
+        Us
     ),
 
-    {noreply, State};
+    io:format("~p~n", [NewUnits]),
+
+%%     lists:foreach(
+%%         fun(P) -> P ! {notify, protocol_handler:pack_with_id(Msg)} end,
+%%         lists:delete(FromPid, Players)
+%%     ),
+
+    {noreply, State#state{units = NewUnits}};
 
 
 handle_cast({exit, PlayerPid, UnitIds}, #state{units = Units, players = Players} = State) ->
@@ -178,12 +183,38 @@ handle_cast({exit, PlayerPid, UnitIds}, #state{units = Units, players = Players}
     {noreply, NewState :: #state{}, timeout() | hibernate} |
     {stop, Reason :: term(), NewState :: #state{}}).
 handle_info({timeout, _TimerRef, sync}, #state{units = Units, players = Players} = State) ->
+
     %% Send the whole scene to all players
-    io:format("sync"),
-    Data = encode_unitupdate_msg(maps:values(Units)),
+
+    Now = eatrun_utils:timestamp_in_milliseconds(),
+
+    NewUnits = maps:map(
+        fun(_K, V) ->
+            [MoveX, MoveY] = V#unit.move_vector,
+            GoX = MoveX * ?SPEED * (Now - V#unit.milliseconds) / 1000,
+            GoY = MoveY * ?SPEED * (Now - V#unit.milliseconds) / 1000,
+
+            io:format("GoX = ~p, GoY = ~p~n", [GoX, GoY]),
+
+            [OldX, OldY] = V#unit.pos,
+            NewPos = [OldX + GoX, OldY + GoY],
+
+            V#unit{pos = NewPos, milliseconds = Now}
+
+        end,
+        Units
+    ),
+
+    io:format("SYNC~n"),
+    io:format("~p~n", [NewUnits]),
+
+
+    Data = encode_unitupdate_msg(maps:values(NewUnits)),
     lists:foreach(fun(P) -> P ! {notify, Data} end, Players),
     erlang:start_timer(?TIMER, self(), sync),
-    {noreply, State}.
+
+
+    {noreply, State#state{units = NewUnits}}.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -250,5 +281,9 @@ encode_unitupdate_msg(Units) ->
         Units
     ),
 
-    Msg = #'ProtocolUnitUpdate'{units = ProtoUnits},
+    Msg = #'ProtocolUnitUpdate'{
+        milliseconds = eatrun_utils:timestamp_in_milliseconds(),
+        units = ProtoUnits
+    },
+
     protocol_handler:pack_with_id(Msg).

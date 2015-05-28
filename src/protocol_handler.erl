@@ -23,12 +23,14 @@ process(DataWithId, State) ->
     protocol_implement:process(DecodedData, State).
 
 
-get_msg_id(#'ProtocolUnitAdd'{}) -> 1;
-get_msg_id(#'ProtocolUnitUpdate'{}) -> 2;
-get_msg_id(#'ProtocolUnitRemove'{}) -> 3.
+get_msg_id(#'ProtocolTimeSync'{}) -> 1;
+get_msg_id(#'ProtocolUnitAdd'{}) -> 100;
+get_msg_id(#'ProtocolUnitUpdate'{}) -> 101;
+get_msg_id(#'ProtocolUnitRemove'{}) -> 102.
 
 
-get_msg_name(1) -> 'ProtocolUnitAdd';
-get_msg_name(2) -> 'ProtocolUnitUpdate';
-get_msg_name(3) -> 'ProtocolUnitRemove'.
+get_msg_name(1) -> 'ProtocolTimeSync';
+get_msg_name(100) -> 'ProtocolUnitAdd';
+get_msg_name(101) -> 'ProtocolUnitUpdate';
+get_msg_name(102) -> 'ProtocolUnitRemove'.
 

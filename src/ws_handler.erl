@@ -15,12 +15,14 @@
          websocket_info/3,
          terminate/3]).
 
+-include("protocol.hrl").
 -include("player.hrl").
 
 init(Req, _Opts) ->
     io:format("WSBSOCKET INIT~n"),
     {ok, RoomPid} = eatrun_room_server:join_room(self()),
     MonitorRef = erlang:monitor(process, RoomPid),
+
     {cowboy_websocket, Req, #player{ids = gb_sets:new(), roompid = RoomPid, monitorref = MonitorRef}}.
 
 websocket_handle({binary, Data}, Req, State) ->
@@ -32,7 +34,6 @@ websocket_info({'DOWN', MonitorRef, _, _, _}, Req, #player{monitorref = MonitorR
     {stop, Req, State};
 
 websocket_info({notify, Data}, Req, State) ->
-    io:format("ws got notify~n"),
     {reply, {binary, Data}, Req, State}.
 
 terminate(_Reason, _Req, #player{ids = Ids, roompid = RoomPid}) ->
