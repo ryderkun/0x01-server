@@ -19,16 +19,14 @@ process(#'ProtocolUnitAdd'{units = PUnits} = Msg, #player{ids = Ids, roompid = R
         PUnits
     ),
 
-    Units = convert_punits_to_units(PUnits),
+    Units = eatrun_utils:protocol_units_to_server_units(PUnits),
     gen_server:cast(RoomPid, {unitadd, Units, Msg, self()}),
     State#player{ids = NewIds};
 
 
-process(#'ProtocolUnitUpdate'{milliseconds = Ms, units = PUnits} = Msg, #player{roompid = RoomPid} = State) ->
-    Now = eatrun_utils:timestamp_in_milliseconds(),
-    io:format("Server - Client = ~p~n", [Now - Ms]),
-    Units = convert_punits_to_units(PUnits, Ms),
-    gen_server:cast(RoomPid, {unitupdate, Units, Msg, self()}),
+process(#'ProtocolUnitUpdate'{milliseconds = Ms, units = PUnits}, #player{roompid = RoomPid} = State) ->
+    Units = eatrun_utils:protocol_units_to_server_units(PUnits, Ms),
+    gen_server:cast(RoomPid, {unitupdate, Units}),
     State;
 
 
@@ -36,23 +34,3 @@ process(#'ProtocolUnitRemove'{}, State) ->
     erlang:error("Not Implement: ProtocolUnitRemove"),
     State.
 
-
-convert_punits_to_units(PUnits) ->
-    convert_punits_to_units(PUnits, eatrun_utils:timestamp_in_milliseconds()).
-
-convert_punits_to_units(PUnits, Ms) ->
-    lists:map(
-        fun(U) ->
-            #'unit'{
-                id = U#'ProtocolUnit'.id,
-                name = U#'ProtocolUnit'.name,
-                size = U#'ProtocolUnit'.size,
-                color = U#'ProtocolUnit'.color,
-                pos = U#'ProtocolUnit'.pos,
-                move_vector = U#'ProtocolUnit'.move_vector,
-                milliseconds = Ms
-            }
-        end,
-
-        PUnits
-    ).

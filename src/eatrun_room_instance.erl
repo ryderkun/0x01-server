@@ -107,17 +107,20 @@ handle_cast({join, PlayerPid}, #state{units = Units, players = Players} = State)
 
     io:format("Room Instance: ~p join~n", [PlayerPid]),
 
-    Data = encode_unitadd_msg(maps:values(Units)),
+    ProtocolUnits = eatrun_utils:server_units_to_protocol_units(maps:values(Units)),
+    Msg = #'ProtocolUnitAdd'{units = ProtocolUnits},
+    Data = protocol_handler:pack_with_id(Msg),
+
     PlayerPid ! {notify, Data},
 
     {noreply, State#state{players = [PlayerPid | Players]}};
+
 
 handle_cast({unitadd, Us, Msg, FromPid}, #state{units = Units, players = Players} = State) ->
     UsMap = maps:from_list([{U#unit.id, U} || U <- Us]),
     NewUnits = maps:merge(Units, UsMap),
 
     Data = protocol_handler:pack_with_id(Msg),
-    io:format("unitadd size = ~p~n", [size(Data)]),
 
     lists:foreach(
         fun(P) -> P ! {notify, Data} end,
@@ -127,7 +130,7 @@ handle_cast({unitadd, Us, Msg, FromPid}, #state{units = Units, players = Players
     {noreply, State#state{units = NewUnits}};
 
 
-handle_cast({unitupdate, Us, Msg, FromPid}, #state{units = Units, players = Players} = State) ->
+handle_cast({unitupdate, ServerUtils}, #state{units = Units} = State) ->
     io:format("unitupdate...~n"),
     NewUnits = lists:foldl(
         fun(U, Acc) ->
@@ -135,7 +138,7 @@ handle_cast({unitupdate, Us, Msg, FromPid}, #state{units = Units, players = Play
                 {ok, Value} ->
                     NewValue = Value#unit{
                         pos = U#unit.pos,
-                        move_vector = U#unit.move_vector,
+                        towards = U#unit.towards,
                         size = U#unit.size,
                         milliseconds = U#unit.milliseconds
                     },
@@ -146,15 +149,8 @@ handle_cast({unitupdate, Us, Msg, FromPid}, #state{units = Units, players = Play
             end
         end,
         Units,
-        Us
+        ServerUtils
     ),
-
-    io:format("~p~n", [NewUnits]),
-
-%%     lists:foreach(
-%%         fun(P) -> P ! {notify, protocol_handler:pack_with_id(Msg)} end,
-%%         lists:delete(FromPid, Players)
-%%     ),
 
     {noreply, State#state{units = NewUnits}};
 
@@ -190,17 +186,14 @@ handle_info({timeout, _TimerRef, sync}, #state{units = Units, players = Players}
 
     NewUnits = maps:map(
         fun(_K, V) ->
-            [MoveX, MoveY] = V#unit.move_vector,
+            [MoveX, MoveY] = V#unit.towards,
             GoX = MoveX * ?SPEED * (Now - V#unit.milliseconds) / 1000,
             GoY = MoveY * ?SPEED * (Now - V#unit.milliseconds) / 1000,
-
-            io:format("GoX = ~p, GoY = ~p~n", [GoX, GoY]),
 
             [OldX, OldY] = V#unit.pos,
             NewPos = [OldX + GoX, OldY + GoY],
 
             V#unit{pos = NewPos, milliseconds = Now}
-
         end,
         Units
     ),
@@ -208,12 +201,16 @@ handle_info({timeout, _TimerRef, sync}, #state{units = Units, players = Players}
     io:format("SYNC~n"),
     io:format("~p~n", [NewUnits]),
 
+    ProtocolUtils = eatrun_utils:server_units_to_protocol_units(maps:values(NewUnits), update),
+    Msg = #'ProtocolUnitUpdate'{
+        milliseconds = Now,
+        units = ProtocolUtils
+    },
 
-    Data = encode_unitupdate_msg(maps:values(NewUnits)),
+    Data = protocol_handler:pack_with_id(Msg),
+
     lists:foreach(fun(P) -> P ! {notify, Data} end, Players),
     erlang:start_timer(?TIMER, self(), sync),
-
-
     {noreply, State#state{units = NewUnits}}.
 
 %%--------------------------------------------------------------------
@@ -249,41 +246,3 @@ code_change(_OldVsn, State, _Extra) ->
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
-
-encode_unitadd_msg(Units) ->
-    ProtoUnits = lists:map(
-        fun(U) -> #'ProtocolUnit'{
-            id = U#unit.id,
-            pos = U#unit.pos,
-            move_vector = U#unit.move_vector,
-            name = U#unit.name,
-            color = U#unit.color,
-            size = U#unit.size
-        } end,
-        Units
-    ),
-
-    io:format("encode_unitadd_msg~n"),
-    io:format("~p~n", [ProtoUnits]),
-
-    Msg = #'ProtocolUnitAdd'{units = ProtoUnits},
-    protocol_handler:pack_with_id(Msg).
-
-
-encode_unitupdate_msg(Units) ->
-    ProtoUnits = lists:map(
-        fun(U) -> #'ProtocolUnit'{
-            id = U#unit.id,
-            pos = U#unit.pos,
-            move_vector = U#unit.move_vector,
-            size = U#unit.size
-        } end,
-        Units
-    ),
-
-    Msg = #'ProtocolUnitUpdate'{
-        milliseconds = eatrun_utils:timestamp_in_milliseconds(),
-        units = ProtoUnits
-    },
-
-    protocol_handler:pack_with_id(Msg).

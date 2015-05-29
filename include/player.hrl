@@ -21,6 +21,6 @@
     size         :: float(),
     color        :: integer(),
     pos          :: [float()],
-    move_vector  :: [float()],
+    towards      :: [float()],
     milliseconds :: integer()
 }).
