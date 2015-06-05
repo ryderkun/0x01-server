@@ -22,20 +22,18 @@
     terminate/2,
     code_change/3]).
 
-
-
--record(state, {
-    units       :: #{},
-    players     :: [pid()]
-}).
-
-
-
--define(TIMER, 200).   % 1/10 s
--define(SPEED, 10).
-
 -include("protocol.hrl").
 -include("player.hrl").
+
+-record(state, {interval        :: number(),                %% the interval milliseconds to sync
+                start_speed     :: number(),                %% A unit's init speed
+                units           :: #{},                     %% { id => #unit{} }
+                players         :: [pid()],
+                dots            :: #{},                     %% { id => #'ProtocolDot'{} }
+                dots_add        :: #{},
+                dots_remove     :: list()
+}).
+
 
 %%%===================================================================
 %%% API
@@ -71,8 +69,13 @@ start_link() ->
     {ok, State :: #state{}} | {ok, State :: #state{}, timeout() | hibernate} |
     {stop, Reason :: term()} | ignore).
 init([]) ->
-    erlang:start_timer(?TIMER, self(), sync),
-    {ok, #state{units = maps:new(), players = []}}.
+    {ok, StartSpeed} = application:get_env(eatrun, start_speed),
+    {ok, Hz} = application:get_env(eatrun, sync_hz),
+    Interval = 1000 div Hz,
+    erlang:start_timer(Interval, self(), sync),
+
+    Dots = generate_random_dots(-80, -50, 80, 50, 50),
+    {ok, #state{interval = Interval, start_speed = StartSpeed, units = maps:new(), players = [], dots = Dots, dots_add = maps:new(), dots_remove = []}}.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -103,24 +106,39 @@ handle_call(_Request, _From, State) ->
     {noreply, NewState :: #state{}} |
     {noreply, NewState :: #state{}, timeout() | hibernate} |
     {stop, Reason :: term(), NewState :: #state{}}).
-handle_cast({join, PlayerPid}, #state{units = Units, players = Players} = State) ->
+handle_cast({dotremove, Ids}, #state{dots = Dots, dots_add = DotsAdd, dots_remove = DotsRemoved} = State) ->
+    NewRemoved = lists:append(Ids, DotsRemoved),
 
+    NewAdd =
+    case maps:size(Dots) of
+        N when N =< 20 ->
+            maps:merge(DotsAdd, generate_random_dots(-80, -50, 80, 50, 30));
+        _ ->
+            DotsAdd
+    end,
+
+    {noreply, State#state{dots_add = NewAdd, dots_remove = NewRemoved}};
+
+
+handle_cast({join, PlayerPid}, #state{units = Units, players = Players, dots = Dots} = State) ->
     io:format("Room Instance: ~p join~n", [PlayerPid]),
 
-    ProtocolUnits = eatrun_utils:server_units_to_protocol_units(maps:values(Units)),
-    Msg = #'ProtocolUnitAdd'{units = ProtocolUnits},
-    Data = protocol_handler:pack_with_id(Msg),
+    MsgUnitAdd = #'ProtocolUnitAdd'{units = eatrun_utils:server_units_to_protocol_units(Units, init)},
+    MsgDotAdd = #'ProtocolDotAdd'{dots = maps:values(Dots)},
+    MsgSceneInit = #'ProtocolSceneInit'{
+        unit_adds = MsgUnitAdd,
+        dot_adds = MsgDotAdd
+    },
 
-    PlayerPid ! {notify, Data},
+    DataSceneInit = protocol_handler:pack_with_id(MsgSceneInit),
+    PlayerPid ! {notify, DataSceneInit},
 
     {noreply, State#state{players = [PlayerPid | Players]}};
 
 
-handle_cast({unitadd, Us, Msg, FromPid}, #state{units = Units, players = Players} = State) ->
-    UsMap = maps:from_list([{U#unit.id, U} || U <- Us]),
+handle_cast({unitadd, ServerUnits, Data, FromPid}, #state{units = Units, players = Players} = State) ->
+    UsMap = maps:from_list([{U#unit.id, U} || U <- ServerUnits]),
     NewUnits = maps:merge(Units, UsMap),
-
-    Data = protocol_handler:pack_with_id(Msg),
 
     lists:foreach(
         fun(P) -> P ! {notify, Data} end,
@@ -130,17 +148,17 @@ handle_cast({unitadd, Us, Msg, FromPid}, #state{units = Units, players = Players
     {noreply, State#state{units = NewUnits}};
 
 
-handle_cast({unitupdate, ServerUtils}, #state{units = Units} = State) ->
-    io:format("unitupdate...~n"),
+handle_cast({unitupdate, ProtocolUnits, Milliseconds}, #state{units = Units} = State) ->
     NewUnits = lists:foldl(
         fun(U, Acc) ->
-            case maps:find(U#unit.id, Acc) of
+            case maps:find(U#'ProtocolUnit'.id, Acc) of
                 {ok, Value} ->
                     NewValue = Value#unit{
-                        pos = U#unit.pos,
-                        towards = U#unit.towards,
-                        size = U#unit.size,
-                        milliseconds = U#unit.milliseconds
+                        pos = U#'ProtocolUnit'.pos,
+                        towards = U#'ProtocolUnit'.towards,
+                        size = U#'ProtocolUnit'.size,
+                        update_at = Milliseconds,
+                        status = U#'ProtocolUnit'.status
                     },
 
                     maps:update(U#unit.id, NewValue, Acc);
@@ -149,14 +167,13 @@ handle_cast({unitupdate, ServerUtils}, #state{units = Units} = State) ->
             end
         end,
         Units,
-        ServerUtils
+        ProtocolUnits
     ),
 
     {noreply, State#state{units = NewUnits}};
 
 
 handle_cast({exit, PlayerPid, UnitIds}, #state{units = Units, players = Players} = State) ->
-
     io:format("Room Instance: ~p exit with unit ids ~p~n", [PlayerPid, UnitIds]),
 
     NewUnits = maps:without(UnitIds, Units),
@@ -178,7 +195,7 @@ handle_cast({exit, PlayerPid, UnitIds}, #state{units = Units, players = Players}
     {noreply, NewState :: #state{}} |
     {noreply, NewState :: #state{}, timeout() | hibernate} |
     {stop, Reason :: term(), NewState :: #state{}}).
-handle_info({timeout, _TimerRef, sync}, #state{units = Units, players = Players} = State) ->
+handle_info({timeout, _TimerRef, sync}, #state{interval = Interval, start_speed = StartSpeed, units = Units, players = Players, dots = Dots, dots_add = DotAdd, dots_remove = DotRemove} = State) ->
 
     %% Send the whole scene to all players
 
@@ -187,31 +204,44 @@ handle_info({timeout, _TimerRef, sync}, #state{units = Units, players = Players}
     NewUnits = maps:map(
         fun(_K, V) ->
             [MoveX, MoveY] = V#unit.towards,
-            GoX = MoveX * ?SPEED * (Now - V#unit.milliseconds) / 1000,
-            GoY = MoveY * ?SPEED * (Now - V#unit.milliseconds) / 1000,
+            GoX = MoveX * StartSpeed * (Now - V#unit.update_at) / 1000,
+            GoY = MoveY * StartSpeed * (Now - V#unit.update_at) / 1000,
 
             [OldX, OldY] = V#unit.pos,
             NewPos = [OldX + GoX, OldY + GoY],
 
-            V#unit{pos = NewPos, milliseconds = Now}
+            V#unit{pos = NewPos, update_at = Now}
         end,
         Units
     ),
 
-    io:format("SYNC~n"),
-    io:format("~p~n", [NewUnits]),
+    NewDots1 = maps:without(DotRemove, Dots),
+    NewDots2 = maps:merge(NewDots1, DotAdd),
 
-    ProtocolUtils = eatrun_utils:server_units_to_protocol_units(maps:values(NewUnits), update),
-    Msg = #'ProtocolUnitUpdate'{
+
+    ProtocolUtils = eatrun_utils:server_units_to_protocol_units(maps:values(NewUnits), sync),
+    MsgUnitUpdate = #'ProtocolUnitUpdate'{
         milliseconds = Now,
         units = ProtocolUtils
     },
+    MsgDotAdd = #'ProtocolDotAdd'{dots = maps:values(DotAdd)},
+    MsgDotremove = #'ProtocolDotRemove'{ids = DotRemove},
 
-    Data = protocol_handler:pack_with_id(Msg),
+    MsgSceneSync = #'ProtocolSceneSync'{
+        unit_updates = MsgUnitUpdate,
+        dot_adds = MsgDotAdd,
+        dot_removes = MsgDotremove
+    },
 
-    lists:foreach(fun(P) -> P ! {notify, Data} end, Players),
-    erlang:start_timer(?TIMER, self(), sync),
-    {noreply, State#state{units = NewUnits}}.
+    DataSceneSync = protocol_handler:pack_with_id(MsgSceneSync),
+
+    lists:foreach(
+        fun(P) -> P ! {notify, DataSceneSync} end,
+        Players
+    ),
+
+    erlang:start_timer(Interval, self(), sync),
+    {noreply, State#state{units = NewUnits, dots = NewDots2, dots_add = maps:new(), dots_remove = []}}.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -226,7 +256,13 @@ handle_info({timeout, _TimerRef, sync}, #state{units = Units, players = Players}
 %%--------------------------------------------------------------------
 -spec(terminate(Reason :: (normal | shutdown | {shutdown, term()} | term()),
     State :: #state{}) -> term()).
-terminate(_Reason, _State) ->
+terminate(_Reason, #state{players = Players}) ->
+    io:format("Room Down...~n"),
+
+    lists:foreach(
+        fun(P) -> P ! room_down end,
+        Players
+    ),
     ok.
 
 %%--------------------------------------------------------------------
@@ -246,3 +282,28 @@ code_change(_OldVsn, State, _Extra) ->
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
+
+
+generate_random_dots(MinX, MinY, MaxX, MaxY, Amount) ->
+    io:format("generate_random_dots"),
+
+    <<A:32, B:32, C:32>> = crypto:rand_bytes(12),
+    random:seed(A, B, C),
+
+    lists:foldl(
+        fun(_, Acc) ->
+            Id = eatrun_utils:uuid(),
+            Px = eatrun_utils:random_point(MinX, MaxX),
+            Py = eatrun_utils:random_point(MinY, MaxY),
+            Color = eatrun_utils:random_color(),
+            Dot = #'ProtocolDot'{
+                id = Id,
+                pos = #'ProtocolVector2'{x = Px, y = Py},
+                color = Color
+            },
+
+            maps:put(Id, Dot, Acc)
+        end,
+        maps:new(),
+        lists:seq(1, Amount)
+    ).

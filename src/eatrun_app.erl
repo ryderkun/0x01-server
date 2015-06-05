@@ -44,16 +44,12 @@ start(_StartType, _StartArgs) ->
     }],
 
     Dispatch = cowboy_router:compile(Route),
-    {ok, _} = cowboy:start_http(
-        http,
-        20,
+    {ok, _} = cowboy:start_http(http, 20,
         [
             {port, 9001},
             {nodelay, true}
         ],
-        [
-            {env, [{dispatch, Dispatch}]}
-        ]
+        [{env, [{dispatch, Dispatch}]}]
     ),
 
     case eatrun_sup:start_link() of

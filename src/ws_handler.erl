@@ -20,26 +20,33 @@
 
 init(Req, _Opts) ->
     io:format("WSBSOCKET INIT~n"),
-    {ok, RoomPid} = eatrun_room_server:join_room(self()),
-    MonitorRef = erlang:monitor(process, RoomPid),
+    {cowboy_websocket, Req, #player{ids = gb_sets:new()}}.
 
-    {cowboy_websocket, Req, #player{ids = gb_sets:new(), roompid = RoomPid, monitorref = MonitorRef}}.
 
 websocket_handle({binary, Data}, Req, State) ->
     NewState = protocol_handler:process(Data, State),
-    {ok, Req, NewState}.
+    {ok, Req, NewState};
 
-websocket_info({'DOWN', MonitorRef, _, _, _}, Req, #player{monitorref = MonitorRef} = State) ->
-    io:format("Room Down!!! ~n"),
-    {stop, Req, State};
+
+websocket_handle({text, _}, Req, State) ->
+    {stop, Req, State}.
+
+
+websocket_info(room_down, Req, State) ->
+    {stop, Req, State#player{roompid = undefined}};
+
 
 websocket_info({notify, Data}, Req, State) ->
     {reply, {binary, Data}, Req, State}.
 
-terminate(_Reason, _Req, #player{ids = Ids, roompid = RoomPid}) ->
-    io:format("terminate...~n"),
 
-    gen_server:cast(RoomPid, {exit, self(), gb_sets:to_list(Ids)}),
+terminate(_Reason, _Req, #player{ids = Ids, roompid = RoomPid}) ->
+    case is_pid(RoomPid) of
+        true ->
+            gen_server:cast(RoomPid, {exit, self(), gb_sets:to_list(Ids)});
+        false ->
+            ok
+    end,
     ok.
 
 

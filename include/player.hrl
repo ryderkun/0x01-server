@@ -8,10 +8,13 @@
 %%%-------------------------------------------------------------------
 -author("wang").
 
+-type unit_status()     :: 'Idle' | 'Move' | 'Jump'.
+
+-export_type([unit_status/0]).
+
 -record(player, {
     ids          :: gb_sets:set(),
-    roompid      :: pid(),
-    monitorref   :: reference()
+    roompid      :: pid()
 }).
 
 
@@ -22,5 +25,6 @@
     color        :: integer(),
     pos          :: [float()],
     towards      :: [float()],
-    milliseconds :: integer()
+    update_at    :: integer(),
+    status       :: unit_status()
 }).

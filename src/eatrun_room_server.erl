@@ -25,8 +25,8 @@
 
 -define(SERVER, ?MODULE).
 
--record(state, {non_full_room_pids :: list(),
-                 full_room_pids      :: gb_sets:set()}).
+-record(state, {non_full_room_pids  :: list(),
+                full_room_pids      :: gb_sets:set()}).
 
 %%%===================================================================
 %%% API
