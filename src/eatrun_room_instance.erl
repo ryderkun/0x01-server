@@ -118,6 +118,7 @@ handle_call({join, PlayerPid}, _From, #state{units = Units, players = Players, d
     {noreply, NewState :: #state{}, timeout() | hibernate} |
     {stop, Reason :: term(), NewState :: #state{}}).
 handle_cast({dotremove, Ids}, #state{dots = Dots, dots_add = DotsAdd, dots_remove = DotsRemoved} = State) ->
+    io:format("DotRemove...~n"),
     NewRemoved = lists:append(Ids, DotsRemoved),
 
     NewAdd =
@@ -133,6 +134,8 @@ handle_cast({dotremove, Ids}, #state{dots = Dots, dots_add = DotsAdd, dots_remov
 
 
 handle_cast({unitadd, ServerUnitsMaps, Data, FromPid}, #state{units = Units, players = Players} = State) ->
+    io:format("unitadd...~n"),
+    io:format("~p~n", [ServerUnitsMaps]),
     NewUnits = maps:merge(Units, ServerUnitsMaps),
 
     lists:foreach(
@@ -145,6 +148,7 @@ handle_cast({unitadd, ServerUnitsMaps, Data, FromPid}, #state{units = Units, pla
 
 handle_cast({unitupdate, ProtocolUnits, Milliseconds}, #state{units = Units} = State) ->
     io:format("unitupdate...~n"),
+    io:format("~p~n",  [ProtocolUnits]),
     NewUnits = lists:foldl(
         fun(U, Acc) ->
             case maps:find(U#'ProtocolUnit'.id, Acc) of
@@ -214,13 +218,23 @@ handle_info({timeout, _TimerRef, sync}, #state{interval = Interval, units = Unit
         milliseconds = Now,
         units = ProtocolUtils
     },
-    MsgDotAdd = #'ProtocolDotAdd'{dots = maps:values(DotAdd)},
-    MsgDotremove = #'ProtocolDotRemove'{ids = DotRemove},
+
+    MsgDotAdd =
+    case maps:size(DotAdd) of
+        0 -> undefined;
+        _ -> #'ProtocolDotAdd'{dots = maps:values(DotAdd)}
+    end,
+
+    MsgDotRemove =
+    case length(DotRemove) of
+        0 -> undefined;
+        _ -> #'ProtocolDotRemove'{ids = DotRemove}
+    end,
 
     MsgSceneSync = #'ProtocolSceneSync'{
         unit_updates = MsgUnitUpdate,
         dot_adds = MsgDotAdd,
-        dot_removes = MsgDotremove
+        dot_removes = MsgDotRemove
     },
 
     DataSceneSync = protocol_handler:pack_with_id(MsgSceneSync),
