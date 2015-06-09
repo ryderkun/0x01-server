@@ -13,7 +13,7 @@
 
 %% API
 -export([start_link/0,
-         join_room/1]).
+         find_room/0]).
 
 %% gen_server callbacks
 -export([init/1,
@@ -44,8 +44,8 @@ start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
 
-join_room(PlayerPid) ->
-    gen_server:call(?SERVER, {join_room, PlayerPid}).
+find_room() ->
+    gen_server:call(?SERVER, find_room).
 
 %%%===================================================================
 %%% gen_server callbacks
@@ -83,7 +83,7 @@ init([]) ->
     {noreply, NewState :: #state{}, timeout() | hibernate} |
     {stop, Reason :: term(), Reply :: term(), NewState :: #state{}} |
     {stop, Reason :: term(), NewState :: #state{}}).
-handle_call({join_room, PlayerPid}, _From, #state{non_full_room_pids = NonRooms} = State) ->
+handle_call(find_room, _From, #state{non_full_room_pids = NonRooms} = State) ->
     NewNonRooms =
     case length(NonRooms) of
         0 ->
@@ -99,8 +99,6 @@ handle_call({join_room, PlayerPid}, _From, #state{non_full_room_pids = NonRooms}
     Index = random:uniform(length(NewNonRooms)),
 
     PickRoomPid = lists:nth(Index, NewNonRooms),
-
-    gen_server:cast(PickRoomPid, {join, PlayerPid}),
     {reply, {ok, PickRoomPid}, State#state{non_full_room_pids = NewNonRooms}}.
 
 

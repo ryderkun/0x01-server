@@ -21,10 +21,11 @@
 -record(unit, {
     id           :: integer(),
     name         :: string(),
-    size         :: float(),
+    score        :: float(),
     color        :: integer(),
-    pos          :: [float()],
-    towards      :: [float()],
+    pos          :: {float(), float()},
+    towards      :: {float(), float()},
     update_at    :: integer(),
-    status       :: unit_status()
+    status       :: unit_status(),
+    changed      :: boolean()
 }).

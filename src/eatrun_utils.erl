@@ -59,7 +59,7 @@ protocol_units_to_server_units(PUnits, Ms) ->
             #'ProtocolUnit'{
                 id = Id,
                 name = Name,
-                size = Size,
+                score = Score,
                 color = Color,
                 pos = #'ProtocolVector2'{x = Px, y = Py},
                 towards = #'ProtocolVector2'{x = Tx, y = Ty},
@@ -69,12 +69,13 @@ protocol_units_to_server_units(PUnits, Ms) ->
             #'unit'{
                 id = Id,
                 name = Name,
-                size = Size,
+                score = Score,
                 color = Color,
-                pos = [Px, Py],
-                towards = [Tx, Ty],
+                pos = {Px, Py},
+                towards = {Tx, Ty},
                 update_at = Ms,
-                status = Status
+                status = Status,
+                changed = true
             }
         end,
 
@@ -86,17 +87,17 @@ server_units_to_protocol_units(ServerUnits, init) ->
         #unit{
             id = Id,
             name = Name,
-            size = Size,
+            score = Score,
             color = Color,
-            pos = [Px, Py],
-            towards = [Tx, Ty],
+            pos = {Px, Py},
+            towards = {Tx, Ty},
             status = Status
         }
     ) ->
         #'ProtocolUnit'{
             id = Id,
             name = Name,
-            size = Size,
+            score = Score,
             color = Color,
             pos = #'ProtocolVector2'{x = Px, y = Py},
             towards = #'ProtocolVector2'{x = Tx, y = Ty},
@@ -111,26 +112,27 @@ server_units_to_protocol_units(ServerUnits, sync) ->
     Fun = fun(
         #unit{
             id = Id,
-            size = Size,
-            pos = [Px, Py],
-            towards = [Tx, Ty],
-            status = Status
+            score = Score,
+            pos = {Px, Py},
+            towards = {Tx, Ty},
+            status = Status,
+            changed = Changed
         }
     ) ->
-        case Status of
-            'Move' ->
+        case Changed of
+            false ->
+                false;
+            true ->
                 {
                     true,
                     #'ProtocolUnit'{
                         id = Id,
-                        size = Size,
+                        score = Score,
                         pos = #'ProtocolVector2'{x = Px, y = Py},
                         towards = #'ProtocolVector2'{x = Tx, y = Ty},
                         status = Status
                     }
-                };
-            _ ->
-                false
+                }
         end
     end,
 

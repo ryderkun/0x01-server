@@ -33,6 +33,7 @@ websocket_handle({text, _}, Req, State) ->
 
 
 websocket_info(room_down, Req, State) ->
+    io:format("ws_handler, room_down~n"),
     {stop, Req, State#player{roompid = undefined}};
 
 
@@ -41,6 +42,7 @@ websocket_info({notify, Data}, Req, State) ->
 
 
 terminate(_Reason, _Req, #player{ids = Ids, roompid = RoomPid}) ->
+    io:format("ws_handler, terminate...~n"),
     case is_pid(RoomPid) of
         true ->
             gen_server:cast(RoomPid, {exit, self(), gb_sets:to_list(Ids)});
