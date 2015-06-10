@@ -34,8 +34,8 @@ process(#'ProtocolUnitAdd'{units = ProtocolUnits} = MsgUnitAdd, #player{ids = Id
     State#player{ids = NewIds};
 
 
-process(#'ProtocolUnitUpdate'{milliseconds = Ms, units = PUnits}, #player{roompid = RoomPid} = State) ->
-    gen_server:cast(RoomPid, {unitupdate, PUnits, Ms}),
+process(#'ProtocolUnitUpdate'{units = PUnits}, #player{roompid = RoomPid} = State) ->
+    gen_server:cast(RoomPid, {unitupdate, PUnits}),
     State;
 
 

@@ -146,9 +146,8 @@ handle_cast({unitadd, ServerUnitsMaps, Data, FromPid}, #state{units = Units, pla
     {noreply, State#state{units = NewUnits}};
 
 
-handle_cast({unitupdate, ProtocolUnits, Milliseconds}, #state{units = Units} = State) ->
-    io:format("unitupdate...~n"),
-    io:format("~p~n",  [ProtocolUnits]),
+handle_cast({unitupdate, ProtocolUnits}, #state{units = Units} = State) ->
+
     NewUnits = lists:foldl(
         fun(U, Acc) ->
             case maps:find(U#'ProtocolUnit'.id, Acc) of
@@ -157,14 +156,15 @@ handle_cast({unitupdate, ProtocolUnits, Milliseconds}, #state{units = Units} = S
                         pos = #'ProtocolVector2'{x = Px, y = Py},
                         towards = #'ProtocolVector2'{x = Tx, y = Ty},
                         status = Status,
-                        score = Score
+                        score = Score,
+                        update_at = UpdateAt
                     } = U,
 
                     NewValue = Value#unit{
                         score = Score,
                         pos = {Px, Py},
                         towards = {Tx, Ty},
-                        update_at = Milliseconds,
+                        update_at = UpdateAt,
                         status = Status,
                         changed = true
                     },
@@ -207,17 +207,13 @@ handle_info({timeout, _TimerRef, sync}, #state{interval = Interval, units = Unit
 
     %% Send the whole scene to all players
 
-    Now = eatrun_utils:timestamp_in_milliseconds(),
 
     NewDots1 = maps:without(DotRemove, Dots),
     NewDots2 = maps:merge(NewDots1, DotAdd),
 
 
     ProtocolUtils = eatrun_utils:server_units_to_protocol_units(maps:values(Units), sync),
-    MsgUnitUpdate = #'ProtocolUnitUpdate'{
-        milliseconds = Now,
-        units = ProtocolUtils
-    },
+    MsgUnitUpdate = #'ProtocolUnitUpdate'{units = ProtocolUtils},
 
     MsgDotAdd =
     case maps:size(DotAdd) of

@@ -91,7 +91,8 @@ server_units_to_protocol_units(ServerUnits, init) ->
             color = Color,
             pos = {Px, Py},
             towards = {Tx, Ty},
-            status = Status
+            status = Status,
+            update_at = UpdateAt
         }
     ) ->
         #'ProtocolUnit'{
@@ -101,7 +102,8 @@ server_units_to_protocol_units(ServerUnits, init) ->
             color = Color,
             pos = #'ProtocolVector2'{x = Px, y = Py},
             towards = #'ProtocolVector2'{x = Tx, y = Ty},
-            status = Status
+            status = Status,
+            update_at = UpdateAt
         }
     end,
 
@@ -116,7 +118,8 @@ server_units_to_protocol_units(ServerUnits, sync) ->
             pos = {Px, Py},
             towards = {Tx, Ty},
             status = Status,
-            changed = Changed
+            changed = Changed,
+            update_at = UpdateAt
         }
     ) ->
         case Changed of
@@ -130,7 +133,8 @@ server_units_to_protocol_units(ServerUnits, sync) ->
                         score = Score,
                         pos = #'ProtocolVector2'{x = Px, y = Py},
                         towards = #'ProtocolVector2'{x = Tx, y = Ty},
-                        status = Status
+                        status = Status,
+                        update_at = UpdateAt
                     }
                 }
         end
