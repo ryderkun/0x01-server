@@ -20,6 +20,14 @@
 
 init(Req, _Opts) ->
     io:format("WSBSOCKET INIT~n"),
+    {ok, Hz} = application:get_env(eatrun, sync_hz),
+    Interval = 1000 div Hz,
+
+    %% send Config message
+    MsgConfig = #'ProtocolConfig'{sync_interval = Interval},
+    MsgData = protocol_handler:pack_with_id(MsgConfig),
+    self() ! {notify, MsgData},
+
     {cowboy_websocket, Req, #player{ids = gb_sets:new()}}.
 
 

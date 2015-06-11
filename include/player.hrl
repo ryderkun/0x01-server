@@ -8,9 +8,6 @@
 %%%-------------------------------------------------------------------
 -author("wang").
 
--type unit_status()     :: 'Idle' | 'Move' | 'Jump'.
-
--export_type([unit_status/0]).
 
 -record(player, {
     ids          :: gb_sets:set(),
@@ -21,11 +18,11 @@
 -record(unit, {
     id           :: integer(),
     name         :: string(),
-    score        :: float(),
+    score        :: integer(),
+    size         :: float(),
     color        :: integer(),
     pos          :: {float(), float()},
     towards      :: {float(), float()},
-    update_at    :: integer(),
-    status       :: unit_status(),
-    changed      :: boolean()
+    speed        :: float(),
+    update_at    :: integer()
 }).

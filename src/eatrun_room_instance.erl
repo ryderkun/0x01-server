@@ -95,11 +95,9 @@ init([]) ->
 handle_call({join, PlayerPid}, _From, #state{units = Units, players = Players, dots = Dots} = State) ->
     io:format("Room Instance: ~p join~n", [PlayerPid]),
 
-    MsgUnitAdd = #'ProtocolUnitAdd'{units = eatrun_utils:server_units_to_protocol_units(maps:values(Units), init)},
-    MsgDotAdd = #'ProtocolDotAdd'{dots = maps:values(Dots)},
     MsgSceneInit = #'ProtocolSceneInit'{
-        unit_adds = MsgUnitAdd,
-        dot_adds = MsgDotAdd
+        unit_adds = eatrun_utils:server_units_to_protocol_units(maps:values(Units), init),
+        dot_adds = maps:values(Dots)
     },
 
     DataSceneInit = protocol_handler:pack_with_id(MsgSceneInit),
@@ -133,49 +131,45 @@ handle_cast({dotremove, Ids}, #state{dots = Dots, dots_add = DotsAdd, dots_remov
 
 
 
-handle_cast({unitadd, ServerUnitsMaps, Data, FromPid}, #state{units = Units, players = Players} = State) ->
-    io:format("unitadd...~n"),
-    io:format("~p~n", [ServerUnitsMaps]),
-    NewUnits = maps:merge(Units, ServerUnitsMaps),
+handle_cast({unit_create, Unit, FromPid}, #state{units = Units, players = Players} = State) ->
+    io:format("unit_create...~n"),
+    NewUnits = maps:put(Unit#unit.id, Unit, Units),
+
+    MsgUnitAdd = #'ProtocolUnitAdd'{is_own = false, units = eatrun_utils:server_units_to_protocol_units([Unit], init)},
+    DataUnitAdd = protocol_handler:pack_with_id(MsgUnitAdd),
 
     lists:foreach(
-        fun(P) -> P ! {notify, Data} end,
+        fun(P) -> P ! {notify, DataUnitAdd} end,
         lists:delete(FromPid, Players)
     ),
 
     {noreply, State#state{units = NewUnits}};
 
 
-handle_cast({unitupdate, ProtocolUnits}, #state{units = Units} = State) ->
-
+handle_cast({unit_move, UnitMoves, UpdateAt}, #state{units = Units} = State) ->
     NewUnits = lists:foldl(
         fun(U, Acc) ->
-            case maps:find(U#'ProtocolUnit'.id, Acc) of
-                {ok, Value} ->
-                    #'ProtocolUnit'{
-                        pos = #'ProtocolVector2'{x = Px, y = Py},
-                        towards = #'ProtocolVector2'{x = Tx, y = Ty},
-                        status = Status,
-                        score = Score,
-                        update_at = UpdateAt
-                    } = U,
+            #'ProtocolUnitMove.UnitMoving'{
+                id = Id,
+                pos = #'ProtocolVector2'{x = Px, y = Py},
+                direction = #'ProtocolVector2'{x = Dx, y = Dy}
+            } = U,
 
+            case maps:find(Id, Acc) of
+                {ok, Value} ->
                     NewValue = Value#unit{
-                        score = Score,
-                        pos = {Px, Py},
-                        towards = {Tx, Ty},
-                        update_at = UpdateAt,
-                        status = Status,
-                        changed = true
+                        %pos = {Px, Py},
+                        towards = {Dx, Dy},
+                        update_at = UpdateAt
                     },
 
-                    maps:update(U#'ProtocolUnit'.id, NewValue, Acc);
+                    maps:update(Id, NewValue, Acc);
                 error ->
                     Acc
             end
         end,
         Units,
-        ProtocolUnits
+        UnitMoves
     ),
 
     {noreply, State#state{units = NewUnits}};
@@ -206,31 +200,42 @@ handle_cast({exit, PlayerPid, UnitIds}, #state{units = Units, players = Players}
 handle_info({timeout, _TimerRef, sync}, #state{interval = Interval, units = Units, players = Players, dots = Dots, dots_add = DotAdd, dots_remove = DotRemove} = State) ->
 
     %% Send the whole scene to all players
-
-
     NewDots1 = maps:without(DotRemove, Dots),
     NewDots2 = maps:merge(NewDots1, DotAdd),
 
+    Now = eatrun_utils:timestamp_in_milliseconds(),
 
-    ProtocolUtils = eatrun_utils:server_units_to_protocol_units(maps:values(Units), sync),
-    MsgUnitUpdate = #'ProtocolUnitUpdate'{units = ProtocolUtils},
 
-    MsgDotAdd =
-    case maps:size(DotAdd) of
-        0 -> undefined;
-        _ -> #'ProtocolDotAdd'{dots = maps:values(DotAdd)}
-    end,
+    NewUnits = maps:map(
+        fun(_Id, V) ->
+            #unit{
+                pos = {Px, Py},
+                towards = {Dx, Dy},
+                speed = Speed,
+                update_at = UpdateAt
+            } = V,
 
-    MsgDotRemove =
-    case length(DotRemove) of
-        0 -> undefined;
-        _ -> #'ProtocolDotRemove'{ids = DotRemove}
-    end,
+            io:format("Px = ~p, Now - ~p, UpdateAt = ~p, Speed - ~p, Dx = ~p~n", [
+                Px, Now, UpdateAt, Speed, Dx
+            ]),
+            NewPosX = Px + Interval * Speed * Dx / 1000,
+            NewPosY = Py + Interval * Speed * Dy / 1000,
+
+            V#unit{
+                pos = {NewPosX, NewPosY},
+                update_at = Now
+            }
+        end,
+
+        Units
+    ),
+
 
     MsgSceneSync = #'ProtocolSceneSync'{
-        unit_updates = MsgUnitUpdate,
-        dot_adds = MsgDotAdd,
-        dot_removes = MsgDotRemove
+        update_at = Now,
+        unit_updates = eatrun_utils:server_units_to_protocol_units(maps:values(NewUnits), sync),
+        dot_adds = maps:values(DotAdd),
+        dot_removes = DotRemove
     },
 
     DataSceneSync = protocol_handler:pack_with_id(MsgSceneSync),
@@ -238,11 +243,6 @@ handle_info({timeout, _TimerRef, sync}, #state{interval = Interval, units = Unit
     lists:foreach(
         fun(P) -> P ! {notify, DataSceneSync} end,
         Players
-    ),
-
-    NewUnits = maps:map(
-        fun(_K, V) -> V#unit{changed = false} end,
-        Units
     ),
 
     erlang:start_timer(Interval, self(), sync),
