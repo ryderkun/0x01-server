@@ -41,7 +41,6 @@ websocket_handle({text, _}, Req, State) ->
 
 
 websocket_info(room_down, Req, State) ->
-    io:format("ws_handler, room_down~n"),
     {stop, Req, State#player{roompid = undefined}};
 
 
@@ -58,5 +57,4 @@ terminate(_Reason, _Req, #player{ids = Ids, roompid = RoomPid}) ->
             ok
     end,
     ok.
-
 

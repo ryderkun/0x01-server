@@ -55,10 +55,12 @@ process(#'ProtocolUnitRemove'{}, State) ->
     erlang:error("Not Implement: ProtocolUnitRemove"),
     State;
 
-
 process(#'ProtocolDotRemove'{ids = Ids}, #player{roompid = RoomId} = State) ->
     gen_server:cast(RoomId, {dotremove, Ids}),
     State.
+
+
+%% ==================
 
 
 reply_time_sync(Msg) ->

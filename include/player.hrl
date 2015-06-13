@@ -16,7 +16,7 @@
 
 
 -record(unit, {
-    id           :: integer(),
+    id           :: string(),
     name         :: string(),
     score        :: integer(),
     size         :: float(),
@@ -25,4 +25,10 @@
     towards      :: {float(), float()},
     speed        :: float(),
     update_at    :: integer()
+}).
+
+-record(detect, {
+    id           :: string(),
+    unit_ids     :: [string()],
+    dot_ids      :: [string()]
 }).

@@ -28,6 +28,7 @@
 -record(state, {interval        :: number(),                %% the interval milliseconds to sync
                 start_speed     :: number(),                %% A unit's init speed
                 units           :: #{},                     %% { id => #unit{} }
+                units_remove    :: list(),
                 players         :: [pid()],
                 dots            :: #{},                     %% { id => #'ProtocolDot'{} }
                 dots_add        :: #{},
@@ -69,6 +70,9 @@ start_link() ->
     {ok, State :: #state{}} | {ok, State :: #state{}, timeout() | hibernate} |
     {stop, Reason :: term()} | ignore).
 init([]) ->
+    <<A:32, B:32, C:32>> = crypto:rand_bytes(12),
+    random:seed(A, B, C),
+
     {ok, StartSpeed} = application:get_env(eatrun, start_speed),
     {ok, Hz} = application:get_env(eatrun, sync_hz),
     Interval = 1000 div Hz,
@@ -115,22 +119,6 @@ handle_call({join, PlayerPid}, _From, #state{units = Units, players = Players, d
     {noreply, NewState :: #state{}} |
     {noreply, NewState :: #state{}, timeout() | hibernate} |
     {stop, Reason :: term(), NewState :: #state{}}).
-handle_cast({dotremove, Ids}, #state{dots = Dots, dots_add = DotsAdd, dots_remove = DotsRemoved} = State) ->
-    io:format("DotRemove...~n"),
-    NewRemoved = lists:append(Ids, DotsRemoved),
-
-    NewAdd =
-    case maps:size(Dots) of
-        N when N =< 30 ->
-            maps:merge(DotsAdd, generate_random_dots(-80, -50, 80, 50, 30));
-        _ ->
-            DotsAdd
-    end,
-
-    {noreply, State#state{dots_add = NewAdd, dots_remove = NewRemoved}};
-
-
-
 handle_cast({unit_create, Unit, FromPid}, #state{units = Units, players = Players} = State) ->
     io:format("unit_create...~n"),
     NewUnits = maps:put(Unit#unit.id, Unit, Units),
@@ -151,7 +139,7 @@ handle_cast({unit_move, UnitMoves, UpdateAt}, #state{units = Units} = State) ->
         fun(U, Acc) ->
             #'ProtocolUnitMove.UnitMoving'{
                 id = Id,
-                pos = #'ProtocolVector2'{x = Px, y = Py},
+                %pos = #'ProtocolVector2'{x = Px, y = Py},
                 direction = #'ProtocolVector2'{x = Dx, y = Dy}
             } = U,
 
@@ -159,8 +147,8 @@ handle_cast({unit_move, UnitMoves, UpdateAt}, #state{units = Units} = State) ->
                 {ok, Value} ->
                     NewValue = Value#unit{
                         %pos = {Px, Py},
-                        towards = {Dx, Dy},
-                        update_at = UpdateAt
+                        towards = {Dx, Dy}
+                        %update_at = UpdateAt
                     },
 
                     maps:update(Id, NewValue, Acc);
@@ -175,12 +163,28 @@ handle_cast({unit_move, UnitMoves, UpdateAt}, #state{units = Units} = State) ->
     {noreply, State#state{units = NewUnits}};
 
 
-handle_cast({exit, PlayerPid, UnitIds}, #state{units = Units, players = Players} = State) ->
+handle_cast({exit, PlayerPid, UnitIds}, #state{units = Units, units_remove = UnitsRemove, players = Players} = State) ->
     io:format("Room Instance: ~p exit with unit ids ~p~n", [PlayerPid, UnitIds]),
 
     NewUnits = maps:without(UnitIds, Units),
     NewPlayers = lists:delete(PlayerPid, Players),
-    {noreply, State#state{units = NewUnits, players = NewPlayers}}.
+    {noreply, State#state{units = NewUnits, units_remove = UnitIds ++ UnitsRemove, players = NewPlayers}};
+
+
+handle_cast({dotremove, Ids}, #state{dots = Dots, dots_add = DotsAdd, dots_remove = DotsRemoved} = State) ->
+    NewDots1 = maps:without(Ids, Dots),
+
+    NewAdd =
+        case maps:size(NewDots1) of
+            N when N =< 30 ->
+                maps:merge(DotsAdd, generate_random_dots(-80, -50, 80, 50, 20));
+            _ ->
+                DotsAdd
+        end,
+
+    NewDots2 = maps:merge(NewDots1, NewAdd),
+
+    {noreply, State#state{dots = NewDots2, dots_add = NewAdd, dots_remove = DotsRemoved ++ Ids}}.
 
 
 %%--------------------------------------------------------------------
@@ -197,14 +201,17 @@ handle_cast({exit, PlayerPid, UnitIds}, #state{units = Units, players = Players}
     {noreply, NewState :: #state{}} |
     {noreply, NewState :: #state{}, timeout() | hibernate} |
     {stop, Reason :: term(), NewState :: #state{}}).
-handle_info({timeout, _TimerRef, sync}, #state{interval = Interval, units = Units, players = Players, dots = Dots, dots_add = DotAdd, dots_remove = DotRemove} = State) ->
+handle_info({timeout, _TimerRef, sync}, #state{
+    interval = Interval,
+    units = Units,
+    units_remove = UnitsRemove,
+    players = Players,
+    dots_add = DotAdd,
+    dots_remove = DotRemove} = State) ->
 
     %% Send the whole scene to all players
-    NewDots1 = maps:without(DotRemove, Dots),
-    NewDots2 = maps:merge(NewDots1, DotAdd),
 
     Now = eatrun_utils:timestamp_in_milliseconds(),
-
 
     NewUnits = maps:map(
         fun(_Id, V) ->
@@ -215,9 +222,6 @@ handle_info({timeout, _TimerRef, sync}, #state{interval = Interval, units = Unit
                 update_at = UpdateAt
             } = V,
 
-            io:format("Px = ~p, Now - ~p, UpdateAt = ~p, Speed - ~p, Dx = ~p~n", [
-                Px, Now, UpdateAt, Speed, Dx
-            ]),
             NewPosX = Px + Interval * Speed * Dx / 1000,
             NewPosY = Py + Interval * Speed * Dy / 1000,
 
@@ -234,6 +238,7 @@ handle_info({timeout, _TimerRef, sync}, #state{interval = Interval, units = Unit
     MsgSceneSync = #'ProtocolSceneSync'{
         update_at = Now,
         unit_updates = eatrun_utils:server_units_to_protocol_units(maps:values(NewUnits), sync),
+        unit_removes = UnitsRemove,
         dot_adds = maps:values(DotAdd),
         dot_removes = DotRemove
     },
@@ -245,8 +250,15 @@ handle_info({timeout, _TimerRef, sync}, #state{interval = Interval, units = Unit
         Players
     ),
 
+    NewState = State#state{
+        units = NewUnits,
+        units_remove = [],
+        dots_add = maps:new(),
+        dots_remove = []
+    },
+
     erlang:start_timer(Interval, self(), sync),
-    {noreply, State#state{units = NewUnits, dots = NewDots2, dots_add = maps:new(), dots_remove = []}}.
+    {noreply, NewState}.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -291,10 +303,6 @@ code_change(_OldVsn, State, _Extra) ->
 
 generate_random_dots(MinX, MinY, MaxX, MaxY, Amount) ->
     io:format("generate_random_dots~n"),
-
-    <<A:32, B:32, C:32>> = crypto:rand_bytes(12),
-    random:seed(A, B, C),
-
     lists:foldl(
         fun(_, Acc) ->
             Id = eatrun_utils:uuid(),

@@ -44,9 +44,6 @@ random_point(Min, Max) ->
     Min + Factor * Diff.
 
 random_color() ->
-    <<X:32, Y:32, Z:32>> = crypto:rand_bytes(12),
-    random:seed(X, Y, Z),
-
     R = random:uniform(100) + 150,
     G = random:uniform(100) + 150,
     B = random:uniform(100) + 150,
