@@ -236,8 +236,12 @@ handle_info({timeout, _TimerRef, sync}, #state{
 
     Now = eatrun_utils:timestamp_in_milliseconds(),
 
+
+    %% detect eat
+    {NewUnits1, NewDots, NewQuadMap, UnitRemoved, DotRemoved} = detect_eat(Units, Dots, QuadMap),
+
     %% move
-    NewUnits1 = maps:map(
+    NewUnits2 = maps:map(
         fun(_Id, V) ->
             #unit{
                 pos = {Px, Py},
@@ -251,11 +255,9 @@ handle_info({timeout, _TimerRef, sync}, #state{
             V#unit{pos = {NewPosX, NewPosY}}
         end,
 
-        Units
+        NewUnits1
     ),
 
-    %% detect eat
-    {NewUnits2, NewDots, NewQuadMap, UnitRemoved, DotRemoved} = detect_eat(NewUnits1, Dots, QuadMap),
 
     %% Send the whole scene to all players
     MsgSceneSync = #'ProtocolSceneSync'{
@@ -393,12 +395,17 @@ do_detect_eat([U | Rest], Units, Dots, QuadMap, UnitRemoved, DotsRemoved) ->
 
             DetectedUnitIds = lists:filter(
                 fun(DetectId) ->
-                    case eatrun_utils:get_id_prefix(DetectId) of
-                        ?UNIT_ID_PREFIX ->
-                            #unit{pos = {X, Y}} = maps:get(DetectId, Units),
-                            is_in_unit_scope(Px, Py, Size * 0.9, X, Y);
-                        _ ->
-                            false
+                    case Id == DetectId of
+                        true ->
+                            false;
+                        false ->
+                            case eatrun_utils:get_id_prefix(DetectId) of
+                                ?UNIT_ID_PREFIX ->
+                                    #unit{pos = {X, Y}} = maps:get(DetectId, Units),
+                                    is_in_unit_scope(Px, Py, Size * 0.9, X, Y);
+                                _ ->
+                                    false
+                            end
                     end
                 end,
                 DetectedIds
@@ -415,7 +422,7 @@ do_detect_eat([U | Rest], Units, Dots, QuadMap, UnitRemoved, DotsRemoved) ->
                         Acc + S
                     end,
                     Score + length(DetectedDotIds) * ?DOT_SCORE,
-                    DetectedDotIds
+                    DetectedUnitIds
                 ),
 
             NewUnits1 = maps:without(DetectedUnitIds, Units),
@@ -426,7 +433,7 @@ do_detect_eat([U | Rest], Units, Dots, QuadMap, UnitRemoved, DotsRemoved) ->
                 speed = eatrun_utils:score_to_speed(NewScore)
             },
 
-            NewUnits2 = maps:put(Id, NewU, NewUnits1),
+            NewUnits2 = maps:update(Id, NewU, NewUnits1),
 
 
             NewQuadMap =

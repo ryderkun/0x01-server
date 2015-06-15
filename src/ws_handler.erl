@@ -35,7 +35,7 @@ init(Req, _Opts) ->
     MsgData = protocol_handler:pack_with_id(MsgConfig),
     self() ! {notify, MsgData},
 
-    {cowboy_websocket, Req, #player{ids = gb_sets:new()}}.
+    {cowboy_websocket, Req, #player{ids = []}}.
 
 
 websocket_handle({binary, Data}, Req, State) ->
@@ -59,7 +59,7 @@ terminate(_Reason, _Req, #player{ids = Ids, roompid = RoomPid}) ->
     io:format("ws_handler, terminate...~n"),
     case is_pid(RoomPid) of
         true ->
-            gen_server:cast(RoomPid, {exit, self(), gb_sets:to_list(Ids)});
+            gen_server:cast(RoomPid, {exit, self(), Ids});
         false ->
             ok
     end,

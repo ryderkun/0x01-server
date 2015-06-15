@@ -32,7 +32,8 @@ uuid() ->
 
 make_id(Prefix) ->
     UUID = uuid(),
-    <<Prefix, UUID/binary>>.
+    Bin = list_to_binary(Prefix),
+    <<Bin/binary, UUID/binary>>.
 
 get_id_prefix(Id) ->
     PrefixInt = binary:first(Id),
