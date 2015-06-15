@@ -14,7 +14,8 @@
 
 %% API
 -export([
-    uuid/0,
+    make_id/1,
+    get_id_prefix/1,
     timestamp/0,
     timestamp_in_milliseconds/0,
     server_units_to_protocol_units/2,
@@ -28,6 +29,16 @@ uuid() ->
     Node = atom_to_list(node()),
     UUID = uuid:to_string(uuid:uuid3(uuid:uuid4(), Node)),
     list_to_binary(UUID).
+
+make_id(Prefix) ->
+    UUID = uuid(),
+    <<Prefix, UUID/binary>>.
+
+get_id_prefix(Id) ->
+    PrefixInt = binary:first(Id),
+    [PrefixStr] = io_lib:fwrite("~c", [PrefixInt]),
+    PrefixStr.
+
 
 timestamp() ->
     {A, B, _C} = os:timestamp(),
@@ -49,12 +60,6 @@ random_color() ->
     B = random:uniform(100) + 150,
     <<Color:32>> = <<0:8, R:8, G:8, B:8>>,
     Color.
-
-score_to_size(Score) ->
-    5.
-
-score_to_speed(Score) ->
-    20.
 
 server_units_to_protocol_units(ServerUnits, init) ->
     Fun = fun(
@@ -94,3 +99,9 @@ server_units_to_protocol_units(ServerUnits, sync) ->
     end,
 
     lists:map(Fun, ServerUnits).
+
+score_to_size(Score) ->
+    5.
+
+score_to_speed(Score) ->
+    20.

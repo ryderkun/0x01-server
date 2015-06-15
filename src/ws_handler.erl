@@ -21,10 +21,17 @@
 init(Req, _Opts) ->
     io:format("WSBSOCKET INIT~n"),
     {ok, Hz} = application:get_env(eatrun, sync_hz),
-    Interval = 1000 div Hz,
+    {ok, {MinX, MinY, MaxX, MaxY}} = application:get_env(eatrun, map_size),
 
     %% send Config message
-    MsgConfig = #'ProtocolConfig'{sync_interval = Interval},
+    MsgConfig = #'ProtocolConfig'{
+        sync_interval = 1000 div Hz,
+        map_minx = MinX,
+        map_miny = MinY,
+        map_maxx = MaxX,
+        map_maxy = MaxY
+    },
+
     MsgData = protocol_handler:pack_with_id(MsgConfig),
     self() ! {notify, MsgData},
 

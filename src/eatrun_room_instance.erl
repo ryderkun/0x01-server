@@ -25,14 +25,16 @@
 -include("protocol.hrl").
 -include("player.hrl").
 
--record(state, {interval        :: number(),                %% the interval milliseconds to sync
-                start_speed     :: number(),                %% A unit's init speed
-                units           :: #{},                     %% { id => #unit{} }
-                units_remove    :: list(),
+-record(state, {map_size        :: {integer(), integer(), integer(), integer()},
+                interval        :: integer(),                %% the interval milliseconds to sync
+                init_speed      :: integer(),                %% A unit's init speed
+                init_size       :: integer(),                %% A unit's init size
                 players         :: [pid()],
-                dots            :: #{},                     %% { id => #'ProtocolDot'{} }
+                units           :: #{},                      %% { id => #unit{} }
+                units_remove    :: [string()],
+                dots            :: #{},                      %% { id => #'ProtocolDot'{} }
                 dots_add        :: #{},
-                dots_remove     :: list()
+                quadmap
 }).
 
 
@@ -73,13 +75,43 @@ init([]) ->
     <<A:32, B:32, C:32>> = crypto:rand_bytes(12),
     random:seed(A, B, C),
 
-    {ok, StartSpeed} = application:get_env(eatrun, start_speed),
     {ok, Hz} = application:get_env(eatrun, sync_hz),
+    {ok, MapSize} = application:get_env(eatrun, map_size),
+    {ok, MapSplits} = application:get_env(eatrun, map_splits),
+    {ok, InitSpeed} = application:get_env(eatrun, init_speed),
+    {ok, InitSize} = application:get_env(eatrun, init_size),
+    {ok, DotAmount} = application:get_env(eatrun, dot_amount),
+
     Interval = 1000 div Hz,
+
+    Dots = generate_random_dots(MapSize, DotAmount),
+    QuadMap = quadmaps:new(MapSize, MapSplits),
+    QuadMap1 =
+    lists:foldl(
+        fun(#'ProtocolDot'{id = Did, pos = #'ProtocolVector2'{x = Dx, y = Dy}}, Acc) ->
+            quadmaps:put(Acc, Did, Dx, Dy)
+        end,
+        QuadMap,
+        maps:values(Dots)
+    ),
+
+    State = #state{
+        map_size = MapSize,
+        interval = Interval,
+        init_speed = InitSpeed,
+        init_size = InitSize,
+        players = [],
+        units = maps:new(),
+        units_remove = [],
+        dots = Dots,
+        dots_add = maps:new(),
+        quadmap = QuadMap1
+    },
+
+
     erlang:start_timer(Interval, self(), sync),
 
-    Dots = generate_random_dots(-80, -50, 80, 50, 50),
-    {ok, #state{interval = Interval, start_speed = StartSpeed, units = maps:new(), players = [], dots = Dots, dots_add = maps:new(), dots_remove = []}}.
+    {ok, State}.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -119,9 +151,11 @@ handle_call({join, PlayerPid}, _From, #state{units = Units, players = Players, d
     {noreply, NewState :: #state{}} |
     {noreply, NewState :: #state{}, timeout() | hibernate} |
     {stop, Reason :: term(), NewState :: #state{}}).
-handle_cast({unit_create, Unit, FromPid}, #state{units = Units, players = Players} = State) ->
+handle_cast({unit_create, Unit, FromPid}, #state{units = Units, players = Players, quadmap = QuadMap} = State) ->
     io:format("unit_create...~n"),
-    NewUnits = maps:put(Unit#unit.id, Unit, Units),
+    #unit{id = Id, pos = {Px, Py}} = Unit,
+    NewUnits = maps:put(Id, Unit, Units),
+    NewQuadMap = quadmaps:put(QuadMap, Id, Px, Py),
 
     MsgUnitAdd = #'ProtocolUnitAdd'{is_own = false, units = eatrun_utils:server_units_to_protocol_units([Unit], init)},
     DataUnitAdd = protocol_handler:pack_with_id(MsgUnitAdd),
@@ -131,60 +165,49 @@ handle_cast({unit_create, Unit, FromPid}, #state{units = Units, players = Player
         lists:delete(FromPid, Players)
     ),
 
-    {noreply, State#state{units = NewUnits}};
+    {noreply, State#state{units = NewUnits, quadmap = NewQuadMap}};
 
 
-handle_cast({unit_move, UnitMoves, UpdateAt}, #state{units = Units} = State) ->
+handle_cast({unit_move, Ids, #'ProtocolVector2'{x = Tx, y = Ty}}, #state{units = Units} = State) ->
     NewUnits = lists:foldl(
-        fun(U, Acc) ->
-            #'ProtocolUnitMove.UnitMoving'{
-                id = Id,
-                %pos = #'ProtocolVector2'{x = Px, y = Py},
-                direction = #'ProtocolVector2'{x = Dx, y = Dy}
-            } = U,
-
-            case maps:find(Id, Acc) of
-                {ok, Value} ->
-                    NewValue = Value#unit{
-                        %pos = {Px, Py},
-                        towards = {Dx, Dy}
-                        %update_at = UpdateAt
-                    },
-
-                    maps:update(Id, NewValue, Acc);
-                error ->
-                    Acc
-            end
+        fun(UId, Acc) ->
+            ThisUnit = maps:get(UId, Acc),
+            #unit{pos = {Px, Py}} = ThisUnit,
+            Towards = towards(Px, Py, Tx, Ty),
+            maps:update(UId, ThisUnit#unit{towards = Towards}, Acc)
         end,
         Units,
-        UnitMoves
+        Ids
     ),
 
     {noreply, State#state{units = NewUnits}};
 
 
-handle_cast({exit, PlayerPid, UnitIds}, #state{units = Units, units_remove = UnitsRemove, players = Players} = State) ->
+handle_cast({exit, PlayerPid, UnitIds}, #state{
+    units = Units,
+    units_remove = UnitsRemove,
+    players = Players,
+    quadmap = QuadMap} = State) ->
+
     io:format("Room Instance: ~p exit with unit ids ~p~n", [PlayerPid, UnitIds]),
 
     NewUnits = maps:without(UnitIds, Units),
     NewPlayers = lists:delete(PlayerPid, Players),
-    {noreply, State#state{units = NewUnits, units_remove = UnitIds ++ UnitsRemove, players = NewPlayers}};
+    NewQuadMap =
+    lists:foldl(
+        fun(Id, Acc) -> quadmaps:delete(Acc, Id) end,
+        QuadMap,
+        UnitIds
+    ),
 
+    NewState = State#state{
+        players = NewPlayers,
+        units = NewUnits,
+        units_remove = UnitIds ++ UnitsRemove,
+        quadmap = NewQuadMap
+    },
 
-handle_cast({dotremove, Ids}, #state{dots = Dots, dots_add = DotsAdd, dots_remove = DotsRemoved} = State) ->
-    NewDots1 = maps:without(Ids, Dots),
-
-    NewAdd =
-        case maps:size(NewDots1) of
-            N when N =< 30 ->
-                maps:merge(DotsAdd, generate_random_dots(-80, -50, 80, 50, 20));
-            _ ->
-                DotsAdd
-        end,
-
-    NewDots2 = maps:merge(NewDots1, NewAdd),
-
-    {noreply, State#state{dots = NewDots2, dots_add = NewAdd, dots_remove = DotsRemoved ++ Ids}}.
+    {noreply, NewState}.
 
 
 %%--------------------------------------------------------------------
@@ -203,58 +226,58 @@ handle_cast({dotremove, Ids}, #state{dots = Dots, dots_add = DotsAdd, dots_remov
     {stop, Reason :: term(), NewState :: #state{}}).
 handle_info({timeout, _TimerRef, sync}, #state{
     interval = Interval,
+    players = Players,
     units = Units,
     units_remove = UnitsRemove,
-    players = Players,
+    dots = Dots,
     dots_add = DotAdd,
-    dots_remove = DotRemove} = State) ->
+    quadmap = QuadMap} = State) ->
 
-    %% Send the whole scene to all players
 
     Now = eatrun_utils:timestamp_in_milliseconds(),
 
-    NewUnits = maps:map(
+    %% move
+    NewUnits1 = maps:map(
         fun(_Id, V) ->
             #unit{
                 pos = {Px, Py},
-                towards = {Dx, Dy},
-                speed = Speed,
-                update_at = UpdateAt
+                towards = {Tx, Ty},
+                speed = Speed
             } = V,
 
-            NewPosX = Px + Interval * Speed * Dx / 1000,
-            NewPosY = Py + Interval * Speed * Dy / 1000,
+            NewPosX = Px + Interval * Speed * Tx / 1000,
+            NewPosY = Py + Interval * Speed * Ty / 1000,
 
-            V#unit{
-                pos = {NewPosX, NewPosY},
-                update_at = Now
-            }
+            V#unit{pos = {NewPosX, NewPosY}}
         end,
 
         Units
     ),
 
+    %% detect eat
+    {NewUnits2, NewDots, NewQuadMap, UnitRemoved, DotRemoved} = detect_eat(NewUnits1, Dots, QuadMap),
 
+    %% Send the whole scene to all players
     MsgSceneSync = #'ProtocolSceneSync'{
         update_at = Now,
-        unit_updates = eatrun_utils:server_units_to_protocol_units(maps:values(NewUnits), sync),
-        unit_removes = UnitsRemove,
+        unit_updates = eatrun_utils:server_units_to_protocol_units(maps:values(NewUnits2), sync),
+        unit_removes = UnitsRemove ++ UnitRemoved,
         dot_adds = maps:values(DotAdd),
-        dot_removes = DotRemove
+        dot_removes = DotRemoved
     },
 
     DataSceneSync = protocol_handler:pack_with_id(MsgSceneSync),
-
     lists:foreach(
         fun(P) -> P ! {notify, DataSceneSync} end,
         Players
     ),
 
     NewState = State#state{
-        units = NewUnits,
+        units = NewUnits2,
         units_remove = [],
+        dots = NewDots,
         dots_add = maps:new(),
-        dots_remove = []
+        quadmap = NewQuadMap
     },
 
     erlang:start_timer(Interval, self(), sync),
@@ -301,11 +324,11 @@ code_change(_OldVsn, State, _Extra) ->
 %%%===================================================================
 
 
-generate_random_dots(MinX, MinY, MaxX, MaxY, Amount) ->
+generate_random_dots({MinX, MinY, MaxX, MaxY}, Amount) ->
     io:format("generate_random_dots~n"),
     lists:foldl(
         fun(_, Acc) ->
-            Id = eatrun_utils:uuid(),
+            Id = eatrun_utils:make_id(?DOT_ID_PREFIX),
             Px = eatrun_utils:random_point(MinX, MaxX),
             Py = eatrun_utils:random_point(MinY, MaxY),
             Color = eatrun_utils:random_color(),
@@ -320,3 +343,104 @@ generate_random_dots(MinX, MinY, MaxX, MaxY, Amount) ->
         maps:new(),
         lists:seq(1, Amount)
     ).
+
+
+towards(Px, Py, Tx, Ty) ->
+    XDiff = Tx - Px,
+    YDiff = Ty - Py,
+    Length = math:sqrt(math:pow(XDiff, 2) + math:pow(YDiff, 2)),
+    {XDiff / Length, YDiff / Length}.
+
+
+detect_eat(Units, Dots, QuadMap) ->
+    UnitsList = lists:sort(
+        fun(#unit{size = A}, #unit{size = B}) -> A > B end,
+        maps:values(Units)
+    ),
+
+    do_detect_eat(UnitsList, Units, Dots, QuadMap, [], []).
+
+do_detect_eat([], Units, Dots, QuadMap, UnitRemoved, DotsRemoved) ->
+    {Units, Dots, QuadMap, UnitRemoved, DotsRemoved};
+
+do_detect_eat([U | Rest], Units, Dots, QuadMap, UnitRemoved, DotsRemoved) ->
+    #unit{id = Id, score = Score, size = Size, pos = {Px, Py}} = U,
+    case maps:is_key(Id, Units) of
+        false ->
+            do_detect_eat(Rest, Units, Dots, QuadMap, UnitRemoved, DotsRemoved);
+        true ->
+            Bounds = {Px - Size, Py - Size, Px + Size, Py + Size},
+
+            DetectedIds = quadmaps:find(QuadMap, Bounds),
+
+            DetectedDotIds = lists:filter(
+                fun(DetectId) ->
+                    case eatrun_utils:get_id_prefix(DetectId) of
+                        ?DOT_ID_PREFIX ->
+                            #'ProtocolDot'{pos = #'ProtocolVector2'{x = X, y = Y}} = maps:get(DetectId, Dots),
+                            is_in_unit_scope(Px, Py, Size, X, Y);
+                        _ ->
+                            false
+                    end
+                end,
+                DetectedIds
+            ),
+            NewDots = maps:without(DetectedDotIds, Dots),
+
+            NewDotsRemoved = DotsRemoved ++ DetectedDotIds,
+
+            io:format("~p touch dots: ~p~n", [Id, DetectedDotIds]),
+
+            DetectedUnitIds = lists:filter(
+                fun(DetectId) ->
+                    case eatrun_utils:get_id_prefix(DetectId) of
+                        ?UNIT_ID_PREFIX ->
+                            #unit{pos = {X, Y}} = maps:get(DetectId, Units),
+                            is_in_unit_scope(Px, Py, Size * 0.9, X, Y);
+                        _ ->
+                            false
+                    end
+                end,
+                DetectedIds
+            ),
+
+            io:format("~p touch units: ~p~n", [Id, DetectedUnitIds]),
+
+            NewUnitRemoved = UnitRemoved ++ DetectedUnitIds,
+
+            NewScore =
+                lists:foldl(
+                    fun(DUId, Acc) ->
+                        #unit{size = S} = maps:get(DUId, Units),
+                        Acc + S
+                    end,
+                    Score + length(DetectedDotIds) * ?DOT_SCORE,
+                    DetectedDotIds
+                ),
+
+            NewUnits1 = maps:without(DetectedUnitIds, Units),
+
+            NewU = U#unit{
+                score = NewScore,
+                size = eatrun_utils:score_to_size(NewScore),
+                speed = eatrun_utils:score_to_speed(NewScore)
+            },
+
+            NewUnits2 = maps:put(Id, NewU, NewUnits1),
+
+
+            NewQuadMap =
+                lists:foldl(
+                    fun(Did, Acc) -> quadmaps:delete(Acc, Did) end,
+                    QuadMap,
+                    DetectedDotIds ++ DetectedDotIds
+                ),
+
+            do_detect_eat(Rest, NewUnits2, NewDots, NewQuadMap, NewUnitRemoved, NewDotsRemoved)
+
+    end.
+
+
+
+is_in_unit_scope(Px, Py, Size, TargetX, TargetY) ->
+    math:pow(TargetX-Px, 2) + math:pow(TargetY-Py, 2) =< math:pow(Size, 2).

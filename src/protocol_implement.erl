@@ -21,7 +21,7 @@ process(#'ProtocolTimeSync'{} = Msg, #player{roompid = RoomPid} = State) when is
 
 
 process(#'ProtocolUnitCreate'{name = Name, pos = Pos}, #player{ids = Ids, roompid = RoomPid} = State) ->
-    Id = eatrun_utils:uuid(),
+    Id = eatrun_utils:make_id(?UNIT_ID_PREFIX),
     Color = eatrun_utils:random_color(),
 
     #'ProtocolVector2'{x = Px, y = Py} = Pos,
@@ -34,8 +34,7 @@ process(#'ProtocolUnitCreate'{name = Name, pos = Pos}, #player{ids = Ids, roompi
         color = Color,
         pos = {Px, Py},
         towards = {0.0, 0.0},
-        speed = eatrun_utils:score_to_speed(0),
-        update_at = eatrun_utils:timestamp_in_milliseconds()
+        speed = eatrun_utils:score_to_speed(0)
     },
 
     MsgUnitAdd = #'ProtocolUnitAdd'{is_own = true, units = eatrun_utils:server_units_to_protocol_units([Unit], init)},
@@ -43,22 +42,20 @@ process(#'ProtocolUnitCreate'{name = Name, pos = Pos}, #player{ids = Ids, roompi
     self() ! {notify, DataUnitAdd},
 
     gen_server:cast(RoomPid, {unit_create, Unit, self()}),
-    State#player{ids = gb_sets:add_element(Id, Ids)};
+    State#player{ids = [Id | Ids]};
 
 
-process(#'ProtocolUnitMove'{update_at = UpdateAt, units = UnitMoves}, #player{roompid = RoomPid} = State) ->
-    gen_server:cast(RoomPid, {unit_move, UnitMoves, UpdateAt}),
+process(#'ProtocolUnitMove'{target = Target}, #player{roompid = RoomPid, ids = Ids} = State) ->
+    gen_server:cast(RoomPid, {unit_move, Ids, Target}),
     State;
 
-
-process(#'ProtocolUnitRemove'{}, State) ->
-    erlang:error("Not Implement: ProtocolUnitRemove"),
+process(#'ProtocolUnitSplit'{}, #player{roompid = RoomPid} = State) ->
+    gen_server:cast(RoomPid, unit_split),
     State;
 
-process(#'ProtocolDotRemove'{ids = Ids}, #player{roompid = RoomId} = State) ->
-    gen_server:cast(RoomId, {dotremove, Ids}),
+process(#'ProtocolUnitEject'{}, #player{roompid = RoomPid} = State) ->
+    gen_server:cast(RoomPid, unit_eject),
     State.
-
 
 %% ==================
 

@@ -9,8 +9,12 @@
 -author("wang").
 
 
+-define(UNIT_ID_PREFIX, "u").
+-define(DOT_ID_PREFIX, "d").
+-define(DOT_SCORE, 2).
+
 -record(player, {
-    ids          :: gb_sets:set(),
+    ids          :: list(),
     roompid      :: pid()
 }).
 
@@ -23,12 +27,5 @@
     color        :: integer(),
     pos          :: {float(), float()},
     towards      :: {float(), float()},
-    speed        :: float(),
-    update_at    :: integer()
-}).
-
--record(detect, {
-    id           :: string(),
-    unit_ids     :: [string()],
-    dot_ids      :: [string()]
+    speed        :: float()
 }).

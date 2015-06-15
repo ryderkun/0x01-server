@@ -30,8 +30,6 @@ get_msg_id(#'ProtocolUnitAdd'{}) -> 101;
 get_msg_id(#'ProtocolUnitMove'{}) -> 102;
 get_msg_id(#'ProtocolUnitSplit'{}) -> 103;
 get_msg_id(#'ProtocolUnitEject'{}) -> 104;
-get_msg_id(#'ProtocolUnitRemove'{}) -> 105;
-get_msg_id(#'ProtocolDotRemove'{}) -> 200;
 get_msg_id(#'ProtocolSceneInit'{}) -> 1000;
 get_msg_id(#'ProtocolSceneSync'{}) -> 1001.
 
@@ -43,8 +41,6 @@ get_msg_name(101) -> 'ProtocolUnitAdd';
 get_msg_name(102) -> 'ProtocolUnitMove';
 get_msg_name(103) -> 'ProtocolUnitSplit';
 get_msg_name(104) -> 'ProtocolUnitEject';
-get_msg_name(105) -> 'ProtocolUnitRemove';
-get_msg_name(200) -> 'ProtocolDotRemove';
 get_msg_name(1000) -> 'ProtocolSceneInit';
 get_msg_name(1001) -> 'ProtocolSceneSync'.
 
