@@ -38,7 +38,8 @@
 start(_StartType, _StartArgs) ->
     Route = [{
         '_', [
-            {"/", index_handler, []},
+            {"/", http_handler_index, []},
+            {"/config/", http_handler_config, []},
             {"/ws/", ws_handler, []}
         ]
     }],

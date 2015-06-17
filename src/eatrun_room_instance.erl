@@ -27,8 +27,6 @@
 
 -record(state, {map_size        :: {integer(), integer(), integer(), integer()},
                 interval        :: integer(),                %% the interval milliseconds to sync
-                init_speed      :: integer(),                %% A unit's init speed
-                init_size       :: integer(),                %% A unit's init size
                 players         :: [pid()],
                 units           :: #{},                      %% { id => #unit{} }
                 units_remove    :: [string()],
@@ -76,13 +74,12 @@ init([]) ->
     random:seed(A, B, C),
 
     {ok, Hz} = application:get_env(eatrun, sync_hz),
-    {ok, MapSize} = application:get_env(eatrun, map_size),
+    {ok, {MapX, MapY}} = application:get_env(eatrun, map_bounds),
     {ok, MapSplits} = application:get_env(eatrun, map_splits),
-    {ok, InitSpeed} = application:get_env(eatrun, init_speed),
-    {ok, InitSize} = application:get_env(eatrun, init_size),
     {ok, DotAmount} = application:get_env(eatrun, dot_amount),
 
     Interval = 1000 div Hz,
+    MapSize = {-MapX, -MapY, MapX, MapY},
 
     Dots = generate_random_dots(MapSize, DotAmount),
     QuadMap = quadmaps:new(MapSize, MapSplits),
@@ -98,8 +95,6 @@ init([]) ->
     State = #state{
         map_size = MapSize,
         interval = Interval,
-        init_speed = InitSpeed,
-        init_size = InitSize,
         players = [],
         units = maps:new(),
         units_remove = [],
@@ -151,9 +146,9 @@ handle_call({join, PlayerPid}, _From, #state{units = Units, players = Players, d
     {noreply, NewState :: #state{}} |
     {noreply, NewState :: #state{}, timeout() | hibernate} |
     {stop, Reason :: term(), NewState :: #state{}}).
-handle_cast({unit_create, Unit, FromPid}, #state{units = Units, players = Players, quadmap = QuadMap} = State) ->
+handle_cast({unit_create, Unit}, #state{units = Units, players = Players, quadmap = QuadMap} = State) ->
     io:format("unit_create...~n"),
-    #unit{id = Id, pos = {Px, Py}} = Unit,
+    #unit{id = Id, pos = {Px, Py}, player_pid = PlayerPid} = Unit,
     NewUnits = maps:put(Id, Unit, Units),
     NewQuadMap = quadmaps:put(QuadMap, Id, Px, Py),
 
@@ -162,48 +157,49 @@ handle_cast({unit_create, Unit, FromPid}, #state{units = Units, players = Player
 
     lists:foreach(
         fun(P) -> P ! {notify, DataUnitAdd} end,
-        lists:delete(FromPid, Players)
+        lists:delete(PlayerPid, Players)
     ),
 
     {noreply, State#state{units = NewUnits, quadmap = NewQuadMap}};
 
 
-handle_cast({unit_move, Ids, #'ProtocolVector2'{x = Tx, y = Ty}}, #state{units = Units} = State) ->
-    NewUnits = lists:foldl(
-        fun(UId, Acc) ->
-            ThisUnit = maps:get(UId, Acc),
-            #unit{pos = {Px, Py}} = ThisUnit,
-            Towards = towards(Px, Py, Tx, Ty),
-            maps:update(UId, ThisUnit#unit{towards = Towards}, Acc)
-        end,
-        Units,
-        Ids
-    ),
+handle_cast({unit_move, Id, #'ProtocolVector2'{x = Tx, y = Ty}}, #state{units = Units} = State) ->
+    Unit = maps:get(Id, Units),
+    #unit{pos = {Px, Py}} = Unit,
+    Towards = towards(Px, Py, Tx, Ty),
+    NewUnits = maps:update(Id, Unit#unit{towards = Towards}, Units),
+
+    {noreply, State#state{units = NewUnits}};
+
+handle_cast({unit_speed_up, Id}, #state{units = Units} = State) ->
+    Unit = maps:get(Id, Units),
+    NewUnits = maps:update(Id, Unit#unit{status = speedup}, Units),
+
+    {noreply, State#state{units = NewUnits}};
+
+handle_cast({unit_speed_normal, Id}, #state{units = Units} = State) ->
+    Unit = maps:get(Id, Units),
+    NewUnits = maps:update(Id, Unit#unit{status = normal}, Units),
 
     {noreply, State#state{units = NewUnits}};
 
 
-handle_cast({exit, PlayerPid, UnitIds}, #state{
+handle_cast({exit, PlayerPid, UnitId}, #state{
     units = Units,
     units_remove = UnitsRemove,
     players = Players,
     quadmap = QuadMap} = State) ->
 
-    io:format("Room Instance: ~p exit with unit ids ~p~n", [PlayerPid, UnitIds]),
+    io:format("Room Instance: ~p exit with unit ids ~p~n", [PlayerPid, UnitId]),
 
-    NewUnits = maps:without(UnitIds, Units),
+    NewUnits = maps:without([UnitId], Units),
     NewPlayers = lists:delete(PlayerPid, Players),
-    NewQuadMap =
-    lists:foldl(
-        fun(Id, Acc) -> quadmaps:delete(Acc, Id) end,
-        QuadMap,
-        UnitIds
-    ),
+    NewQuadMap = quadmaps:delete(QuadMap, UnitId),
 
     NewState = State#state{
         players = NewPlayers,
         units = NewUnits,
-        units_remove = UnitIds ++ UnitsRemove,
+        units_remove = [UnitId | UnitsRemove],
         quadmap = NewQuadMap
     },
 
@@ -238,23 +234,11 @@ handle_info({timeout, _TimerRef, sync}, #state{
 
 
     %% detect eat
-    {NewUnits1, NewDots, NewQuadMap, UnitRemoved, DotRemoved} = detect_eat(Units, Dots, QuadMap),
+    {NewUnits1, NewDots, NewQuadMap, UnitEated, DotEated} = detect_eat(Units, Dots, QuadMap),
 
     %% move
     NewUnits2 = maps:map(
-        fun(_Id, V) ->
-            #unit{
-                pos = {Px, Py},
-                towards = {Tx, Ty},
-                speed = Speed
-            } = V,
-
-            NewPosX = Px + Interval * Speed * Tx / 1000,
-            NewPosY = Py + Interval * Speed * Ty / 1000,
-
-            V#unit{pos = {NewPosX, NewPosY}}
-        end,
-
+        fun(_Id, V) -> update_unit(V#unit.status, Interval, V) end,
         NewUnits1
     ),
 
@@ -263,15 +247,24 @@ handle_info({timeout, _TimerRef, sync}, #state{
     MsgSceneSync = #'ProtocolSceneSync'{
         update_at = Now,
         unit_updates = eatrun_utils:server_units_to_protocol_units(maps:values(NewUnits2), sync),
-        unit_removes = UnitsRemove ++ UnitRemoved,
+        unit_removes = UnitsRemove ++ UnitEated,
         dot_adds = maps:values(DotAdd),
-        dot_removes = DotRemoved
+        dot_removes = DotEated
     },
 
     DataSceneSync = protocol_handler:pack_with_id(MsgSceneSync),
     lists:foreach(
         fun(P) -> P ! {notify, DataSceneSync} end,
         Players
+    ),
+
+    %% Send unit_eaten to related players
+    lists:foreach(
+        fun(Uid) ->
+            #unit{player_pid = PlayerId} = maps:get(Uid, Units),
+            PlayerId ! unit_eaten
+        end,
+        UnitEated
     ),
 
     NewState = State#state{
@@ -362,14 +355,14 @@ detect_eat(Units, Dots, QuadMap) ->
 
     do_detect_eat(UnitsList, Units, Dots, QuadMap, [], []).
 
-do_detect_eat([], Units, Dots, QuadMap, UnitRemoved, DotsRemoved) ->
-    {Units, Dots, QuadMap, UnitRemoved, DotsRemoved};
+do_detect_eat([], Units, Dots, QuadMap, UnitBeenEaten, DotsBeenEaten) ->
+    {Units, Dots, QuadMap, UnitBeenEaten, DotsBeenEaten};
 
-do_detect_eat([U | Rest], Units, Dots, QuadMap, UnitRemoved, DotsRemoved) ->
+do_detect_eat([U | Rest], Units, Dots, QuadMap, UnitBeenEaten, DotsBeenEaten) ->
     #unit{id = Id, score = Score, size = Size, pos = {Px, Py}} = U,
     case maps:is_key(Id, Units) of
         false ->
-            do_detect_eat(Rest, Units, Dots, QuadMap, UnitRemoved, DotsRemoved);
+            do_detect_eat(Rest, Units, Dots, QuadMap, UnitBeenEaten, DotsBeenEaten);
         true ->
             Bounds = {Px - Size, Py - Size, Px + Size, Py + Size},
 
@@ -389,7 +382,7 @@ do_detect_eat([U | Rest], Units, Dots, QuadMap, UnitRemoved, DotsRemoved) ->
             ),
             NewDots = maps:without(DetectedDotIds, Dots),
 
-            NewDotsRemoved = DotsRemoved ++ DetectedDotIds,
+            NewDotsBeenEaten = DotsBeenEaten ++ DetectedDotIds,
 
             io:format("~p touch dots: ~p~n", [Id, DetectedDotIds]),
 
@@ -401,7 +394,7 @@ do_detect_eat([U | Rest], Units, Dots, QuadMap, UnitRemoved, DotsRemoved) ->
                         false ->
                             case eatrun_utils:get_id_prefix(DetectId) of
                                 ?UNIT_ID_PREFIX ->
-                                    #unit{pos = {X, Y}} = maps:get(DetectId, Units),
+                                    #unit{id = Id, pos = {X, Y}} = maps:get(DetectId, Units),
                                     is_in_unit_scope(Px, Py, Size * 0.9, X, Y);
                                 _ ->
                                     false
@@ -413,24 +406,25 @@ do_detect_eat([U | Rest], Units, Dots, QuadMap, UnitRemoved, DotsRemoved) ->
 
             io:format("~p touch units: ~p~n", [Id, DetectedUnitIds]),
 
-            NewUnitRemoved = UnitRemoved ++ DetectedUnitIds,
+            NewUnitBeenEaten = UnitBeenEaten ++ DetectedUnitIds,
 
             NewScore =
                 lists:foldl(
                     fun(DUId, Acc) ->
                         #unit{size = S} = maps:get(DUId, Units),
-                        Acc + S
+                        Acc + S * 0.9
                     end,
                     Score + length(DetectedDotIds) * ?DOT_SCORE,
                     DetectedUnitIds
                 ),
+            {NewSize, NewSpeed} = eatrun_utils:score_to_size_and_speed(NewScore),
 
             NewUnits1 = maps:without(DetectedUnitIds, Units),
 
             NewU = U#unit{
                 score = NewScore,
-                size = eatrun_utils:score_to_size(NewScore),
-                speed = eatrun_utils:score_to_speed(NewScore)
+                size = NewSize,
+                speed = NewSpeed
             },
 
             NewUnits2 = maps:update(Id, NewU, NewUnits1),
@@ -443,11 +437,46 @@ do_detect_eat([U | Rest], Units, Dots, QuadMap, UnitRemoved, DotsRemoved) ->
                     DetectedDotIds ++ DetectedDotIds
                 ),
 
-            do_detect_eat(Rest, NewUnits2, NewDots, NewQuadMap, NewUnitRemoved, NewDotsRemoved)
-
+            do_detect_eat(Rest, NewUnits2, NewDots, NewQuadMap, NewUnitBeenEaten, NewDotsBeenEaten)
     end.
 
 
 
 is_in_unit_scope(Px, Py, Size, TargetX, TargetY) ->
-    math:pow(TargetX-Px, 2) + math:pow(TargetY-Py, 2) =< math:pow(Size, 2).
+    math:pow(TargetX-Px, 2) + math:pow(TargetY-Py, 2) =< math:pow(Size/2, 2).
+
+
+update_unit(normal, Interval, #unit{
+    pos = {Px, Py},
+    towards = {Tx, Ty},
+    speed = Speed} = Unit) ->
+
+    NewPosX = Px + Interval * Speed * Tx / 1000,
+    NewPosY = Py + Interval * Speed * Ty / 1000,
+    Unit#unit{pos = {NewPosX, NewPosY}};
+
+update_unit(speedup, Interval, #unit{score = Score} = Unit) ->
+    {NewScore, NewStatus} =
+    case Score * 0.9 of
+        N when N < ?UNIT_INIT_SCORE ->
+            % auto turn to normal
+            {?UNIT_INIT_SCORE, normal};
+        N ->
+            {N, speedup}
+    end,
+
+    {NewSize, NewSpeed} = eatrun_utils:score_to_size_and_speed(NewScore),
+    NewSpeed1 =
+    case NewStatus of
+        normal -> NewSpeed;
+        speedup -> NewSpeed * ?UNIT_SPEED_UP_MULTI
+    end,
+
+    NewUnit = Unit#unit{
+    score = NewScore,
+    size = NewSize,
+    speed = NewSpeed1,
+    status = NewStatus
+    },
+
+    update_unit(normal, Interval, NewUnit).

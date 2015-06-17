@@ -21,8 +21,7 @@
     server_units_to_protocol_units/2,
     random_point/2,
     random_color/0,
-    score_to_size/1,
-    score_to_speed/1]).
+    score_to_size_and_speed/1]).
 
 
 uuid() ->
@@ -101,8 +100,20 @@ server_units_to_protocol_units(ServerUnits, sync) ->
 
     lists:map(Fun, ServerUnits).
 
-score_to_size(Score) ->
-    5.
 
-score_to_speed(Score) ->
-    20.
+score_to_size_and_speed(Score) ->
+    % Score = 5,        Size = 5,   Speed = 20
+    % Score = 100000,   Size = 100, Speed = 1
+    % Size = math:log10((Score-4)) * 20 + 5,
+    Size = if
+               Score < ?UNIT_INIT_SCORE -> 5;
+               Score =< 100     -> 15 / 95 * (Score - 5) + 5;
+               Score =< 500     -> 20 / 400 * (Score - 100) + 20;
+               Score =< 1000    -> 20 / 500 * (Score - 500) + 40;
+               Score =< 2000    -> 20 / 1000 * (Score - 1000) + 60;
+               Score =< 5000    -> 20 / 3000 * (Score - 2000) + 80;
+               true -> 100
+           end,
+
+    Speed = (100-Size) / 5 + 1,
+    {Size, Speed}.

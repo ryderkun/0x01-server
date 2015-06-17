@@ -6,7 +6,7 @@
 %%% @end
 %%% Created : 2015-05-27 23:05
 %%%-------------------------------------------------------------------
--module(index_handler).
+-module(http_handler_index).
 -author("wang").
 
 %% API

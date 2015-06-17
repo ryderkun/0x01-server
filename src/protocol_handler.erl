@@ -28,8 +28,8 @@ get_msg_id(#'ProtocolTimeSync'{}) -> 2;
 get_msg_id(#'ProtocolUnitCreate'{}) -> 100;
 get_msg_id(#'ProtocolUnitAdd'{}) -> 101;
 get_msg_id(#'ProtocolUnitMove'{}) -> 102;
-get_msg_id(#'ProtocolUnitSplit'{}) -> 103;
-get_msg_id(#'ProtocolUnitEject'{}) -> 104;
+get_msg_id(#'ProtocolUnitSpeedUp'{}) -> 103;
+get_msg_id(#'ProtocolUnitSpeedNormal'{}) -> 104;
 get_msg_id(#'ProtocolSceneInit'{}) -> 1000;
 get_msg_id(#'ProtocolSceneSync'{}) -> 1001.
 
@@ -39,8 +39,8 @@ get_msg_name(2) -> 'ProtocolTimeSync';
 get_msg_name(100) -> 'ProtocolUnitCreate';
 get_msg_name(101) -> 'ProtocolUnitAdd';
 get_msg_name(102) -> 'ProtocolUnitMove';
-get_msg_name(103) -> 'ProtocolUnitSplit';
-get_msg_name(104) -> 'ProtocolUnitEject';
+get_msg_name(103) -> 'ProtocolUnitSpeedUp';
+get_msg_name(104) -> 'ProtocolUnitSpeedNormal';
 get_msg_name(1000) -> 'ProtocolSceneInit';
 get_msg_name(1001) -> 'ProtocolSceneSync'.
 
