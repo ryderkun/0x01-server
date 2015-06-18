@@ -13,7 +13,7 @@
 -define(DOT_ID_PREFIX, "d").
 -define(DOT_SCORE, 20).
 -define(UNIT_INIT_SCORE, 5).
--define(UNIT_SPEED_UP_MULTI, 2).
+-define(UNIT_SPEED_UP_MULTI, 1.5).
 
 -type status()   :: normal | speedup.
 -export_type([status/0]).

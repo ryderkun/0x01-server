@@ -165,9 +165,7 @@ handle_cast({unit_create, Unit}, #state{units = Units, players = Players, quadma
 
 handle_cast({unit_move, Id, #'ProtocolVector2'{x = Tx, y = Ty}}, #state{units = Units} = State) ->
     Unit = maps:get(Id, Units),
-    #unit{pos = {Px, Py}} = Unit,
-    Towards = towards(Px, Py, Tx, Ty),
-    NewUnits = maps:update(Id, Unit#unit{towards = Towards}, Units),
+    NewUnits = maps:update(Id, Unit#unit{towards = {Tx, Ty}}, Units),
 
     {noreply, State#state{units = NewUnits}};
 
@@ -340,11 +338,11 @@ generate_random_dots({MinX, MinY, MaxX, MaxY}, Amount) ->
     ).
 
 
-towards(Px, Py, Tx, Ty) ->
-    XDiff = Tx - Px,
-    YDiff = Ty - Py,
-    Length = math:sqrt(math:pow(XDiff, 2) + math:pow(YDiff, 2)),
-    {XDiff / Length, YDiff / Length}.
+%% towards(Px, Py, Tx, Ty) ->
+%%     XDiff = Tx - Px,
+%%     YDiff = Ty - Py,
+%%     Length = math:sqrt(math:pow(XDiff, 2) + math:pow(YDiff, 2)),
+%%     {XDiff / Length, YDiff / Length}.
 
 
 detect_eat(Units, Dots, QuadMap) ->
@@ -394,7 +392,7 @@ do_detect_eat([U | Rest], Units, Dots, QuadMap, UnitBeenEaten, DotsBeenEaten) ->
                         false ->
                             case eatrun_utils:get_id_prefix(DetectId) of
                                 ?UNIT_ID_PREFIX ->
-                                    #unit{id = Id, pos = {X, Y}} = maps:get(DetectId, Units),
+                                    #unit{pos = {X, Y}} = maps:get(DetectId, Units),
                                     is_in_unit_scope(Px, Py, Size * 0.9, X, Y);
                                 _ ->
                                     false
@@ -434,7 +432,7 @@ do_detect_eat([U | Rest], Units, Dots, QuadMap, UnitBeenEaten, DotsBeenEaten) ->
                 lists:foldl(
                     fun(Did, Acc) -> quadmaps:delete(Acc, Did) end,
                     QuadMap,
-                    DetectedDotIds ++ DetectedDotIds
+                    DetectedDotIds ++ DetectedUnitIds
                 ),
 
             do_detect_eat(Rest, NewUnits2, NewDots, NewQuadMap, NewUnitBeenEaten, NewDotsBeenEaten)

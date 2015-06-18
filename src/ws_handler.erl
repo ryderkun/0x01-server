@@ -37,7 +37,7 @@ websocket_handle({text, _}, Req, State) ->
 
 websocket_info(unit_eaten, Req, State) ->
     io:format("unit_eaten...~n"),
-    {ok, Req, State#player{unit_id = undefined}};
+    {stop, Req, State#player{unit_id = undefined}};
 
 websocket_info(room_down, Req, State) ->
     {stop, Req, State#player{roompid = undefined}};

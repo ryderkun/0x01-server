@@ -50,8 +50,8 @@ process(#'ProtocolUnitCreate'{name = Name, pos = Pos}, #player{unit_id = undefin
     {ok, State#player{unit_id = Id}};
 
 
-process(#'ProtocolUnitMove'{target = Target}, #player{roompid = RoomPid, unit_id = UnitId} = State) ->
-    gen_server:cast(RoomPid, {unit_move, UnitId, Target}),
+process(#'ProtocolUnitMove'{towards = Towards}, #player{roompid = RoomPid, unit_id = UnitId} = State) ->
+    gen_server:cast(RoomPid, {unit_move, UnitId, Towards}),
     {ok, State};
 
 process(#'ProtocolUnitSpeedUp'{}, #player{roompid = RoomPid, unit_id = UnitId} = State) ->
